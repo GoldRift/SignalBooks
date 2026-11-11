@@ -98,8 +98,7 @@ SignalBooks/
   `createtorrent` reports a duplicate, so look the hash up in `mylist` first).
 - Multi-file audiobooks: if the torrent has several files, request with
   `zip_link=true` and send the zip URL; if it's one file, link it directly.
-  Unknown: `createtorrent` only auto-zips at 100+ files, so `zip_link=true` on a
-  small multi-file torrent needs a real-key check.
+  Confirmed: `zip_link=true` returns a `/zip/...` URL for a 7-file torrent.
 - Delivery does not delete the torrent: it stays on TorBox so a link can be
   re-requested after the ~3 h window. TorBox's slot limit decides throughput.
 - Excess requests wait in an explicit server-side queue. Submit up to the available
@@ -127,9 +126,15 @@ SignalBooks/
       `"Found Cached Torrent. Using Cached Torrent."` with a fresh `torrent_id`, so
       cached adds can go straight to delivery without waiting on the poll loop.
 - [ ] Pick the private group id (base64) only after the 1:1 flow works.
-- [ ] Sanity-check TorBox endpoints with a real key (curl): create and mylist done;
-      `requestdl` still to run. Settle while the key is out: does `zip_link=true`
-      work on a 24-file torrent, does `as_queued=true` auto-drain into free slots.
+- [x] All three TorBox calls verified against the live account: `createtorrent`
+      (cached add returns a `torrent_id` immediately), `mylist?bypass_cache=true`
+      (cached item: `download_state: cached`, `progress: 1`, `files: 7`), and
+      `requestdl` with `zip_link=true` on a 7-file torrent → a `/zip/...` CDN URL.
+      So the zip branch works well below the 100-file auto-zip threshold.
+- [ ] Still open, defer to Phase 3: whether an add with all 3 slots busy comes back
+      with a `torrent_id` that starts by itself later, or needs `as_queued=true`
+      (which returns a `queued_id` instead, tracked via `queued/getqueued`). That
+      answer decides whether `jobs.py` keeps its own queue at all.
 
 ### 1. Skeleton + Signal plumbing
 
