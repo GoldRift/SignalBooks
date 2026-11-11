@@ -82,16 +82,23 @@ SignalBooks/
 - `torbox.py`: base `https://api.torbox.app/v1/api`, `Authorization: Bearer $TORBOX_API_KEY`.
   `createtorrent` is form-encoded (`magnet=...`); `mylist` and `requestdl` are GETs.
   `requestdl` also needs the API key as the `token` query param.
-  Verify exact response field names against `/docs` during implementation
-  (`download_finished`, `download_state`, `files[]` are the ones we need).
+  Shapes confirmed from the published collection (see Phase 0): `createtorrent`
+  returns `{hash, torrent_id}`; `mylist?files=true` items carry `download_finished`,
+  `download_state`, `cached`, `size`, `files[{id,size,name,zipped}]`; `requestdl`
+  takes `torrent_id`, `file_id`, `zip_link`.
 - `jobs.py`: **one** `mylist` call per poll for all pending jobs, not one per job.
-  Idle → no polling at all. Persist `{torrent_id: {chat, title, sent}}` to
+  Idle → no polling at all. `mylist` data is cached up to 600 s, so polls pass
+  `bypass_cache=true` (and `files=true` when the file list is needed). Persist
+  `{torrent_id: {chat, title, sent}}` to
   `state.json` with atomic write (tmp + rename) so a restart doesn't lose replies.
   Track delivery order per chat so `/relink` can find the most recent torrent.
 - Dedup: ignore the same URL from the same chat within 10 minutes.
-  Reuse TorBox's existing torrent id if `createtorrent` reports it already exists.
+  Reuse TorBox's existing torrent id instead of re-adding (docs don't say
+  `createtorrent` reports a duplicate, so look the hash up in `mylist` first).
 - Multi-file audiobooks: if the torrent has several files, request with
   `zip_link=true` and send the zip URL; if it's one file, link it directly.
+  Unknown: `createtorrent` only auto-zips at 100+ files, so `zip_link=true` on a
+  small multi-file torrent needs a real-key check.
 - Delivery does not delete the torrent: it stays on TorBox so a link can be
   re-requested after the ~3 h window. TorBox's slot limit decides throughput.
 - Excess requests wait in an explicit server-side queue. Submit up to the available
@@ -108,9 +115,19 @@ SignalBooks/
       hash, so a session cookie (`ABB_COOKIE`) is mandatory.
 - [x] Keep completed torrents on TorBox so links can be re-requested; TorBox's slots
       decide throughput, with excess requests queued server-side.
+- [x] TorBox endpoint shapes read off the published API collection: `createtorrent`
+      (form-encoded) → `{hash, torrent_id}`; `mylist?files=true` → `download_finished`,
+      `download_state`, `cached`, `files[{id,size,zipped}]`; `requestdl?token=`
+      → a single CDN URL, 3 h to start the download.
 - [ ] Confirm TorBox plan's active-download slots and max torrent size.
+      `GET /user/me?settings=false` returns `plan` (0 free, 1 essential, 2 pro,
+      3 standard) and `additional_concurrent_slots`; max size is not in the API,
+      so read it off the dashboard. Also note the limits: 300 req/min and
+      60 uncached torrents/hour.
 - [ ] Pick the private group id (base64) only after the 1:1 flow works.
 - [ ] Sanity-check TorBox endpoints with a real key (curl): create, mylist, requestdl.
+      Also settle two open questions while the key is out: does `as_queued=true`
+      auto-drain into slots on its own, and does `zip_link=true` work under 100 files.
 
 ### 1. Skeleton + Signal plumbing
 
