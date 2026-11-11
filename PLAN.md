@@ -88,9 +88,10 @@ SignalBooks/
   takes `torrent_id`, `file_id`, `zip_link`.
 - `jobs.py`: **one** `mylist` call per poll for all pending jobs, not one per job.
   Idle → no polling at all. `mylist` data is cached up to 600 s, so polls pass
-  `bypass_cache=true` (and `files=true` when the file list is needed). Persist
-  `{torrent_id: {chat, title, sent}}` to
-  `state.json` with atomic write (tmp + rename) so a restart doesn't lose replies.
+  `bypass_cache=true` (and `files=true` when the file list is needed). `mylist`
+  pages at 100 items, so walk pages until every pending id is seen. Persist
+  `{torrent_id: {chat, title, sent}}` to `state.json` with atomic write (tmp + rename)
+  so a restart doesn't lose replies.
   Track delivery order per chat so `/relink` can find the most recent torrent.
 - Dedup: ignore the same URL from the same chat within 10 minutes.
   Reuse TorBox's existing torrent id instead of re-adding (docs don't say
@@ -119,15 +120,16 @@ SignalBooks/
       (form-encoded) → `{hash, torrent_id}`; `mylist?files=true` → `download_finished`,
       `download_state`, `cached`, `files[{id,size,zipped}]`; `requestdl?token=`
       → a single CDN URL, 3 h to start the download.
-- [ ] Confirm TorBox plan's active-download slots and max torrent size.
-      `GET /user/me?settings=false` returns `plan` (0 free, 1 essential, 2 pro,
-      3 standard) and `additional_concurrent_slots`; max size is not in the API,
-      so read it off the dashboard. Also note the limits: 300 req/min and
-      60 uncached torrents/hour.
+- [x] TorBox plan confirmed: **Essential (plan 1)**, 3 concurrent slots, 200 GB max
+      per download, 0 extra slots. Limits that matter: 300 req/min, 60 uncached
+      torrents/hour, and `mylist` pages at 100 items (dedup scans must paginate).
+- [x] `createtorrent` against an already-cached torrent returns
+      `"Found Cached Torrent. Using Cached Torrent."` with a fresh `torrent_id`, so
+      cached adds can go straight to delivery without waiting on the poll loop.
 - [ ] Pick the private group id (base64) only after the 1:1 flow works.
-- [ ] Sanity-check TorBox endpoints with a real key (curl): create, mylist, requestdl.
-      Also settle two open questions while the key is out: does `as_queued=true`
-      auto-drain into slots on its own, and does `zip_link=true` work under 100 files.
+- [ ] Sanity-check TorBox endpoints with a real key (curl): create and mylist done;
+      `requestdl` still to run. Settle while the key is out: does `zip_link=true`
+      work on a 24-file torrent, does `as_queued=true` auto-drain into free slots.
 
 ### 1. Skeleton + Signal plumbing
 
