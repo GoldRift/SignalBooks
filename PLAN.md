@@ -200,7 +200,8 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 - [x] `requestdl` with single-file vs zip branch, covered by respx tests
       (`jobs.link_for`); the live check that both URLs actually download is open.
-- [ ] Confirm a live single-file and a live zip link download from a real browser.
+- [x] Live check 2026-11-12: both a single-file link and a multi-file zip link
+      download.
 - [x] `/help`, `/abb`, and `/relink` parsing in `messages.py`; bare `/relink` uses
       the chat's last delivery, `/relink <torrent_id>` picks a specific one
       (`jobs.relink`). Routing these from chat happens with Phase 1.

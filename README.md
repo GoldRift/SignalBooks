@@ -7,10 +7,11 @@ link. No torrent data passes through this box and nothing is re-hosted.
 
 ## Status
 
-Phase 4 is partly done: the single-file vs zip `requestdl` branch, command parsing
-(`/help`, `/abb`, `/relink`), and chat-scoped relink are implemented and unit-tested.
-Not done yet: a live check that the returned links download, a multi-file end-to-end
-run, and the Signal bot itself (Phase 1). Commands are not reachable from chat yet.
+Phase 4 is partly done: the single-file and zip `requestdl` links are confirmed
+working against live TorBox, and command parsing (`/help`, `/abb`, `/relink`) plus
+chat-scoped relink are implemented and unit-tested. Not done yet: a multi-file
+end-to-end run from the CLI, and the Signal bot itself (Phase 1). Commands are not
+reachable from chat yet.
 
 ## How it works
 
