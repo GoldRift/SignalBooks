@@ -7,10 +7,10 @@ link. No torrent data passes through this box and nothing is re-hosted.
 
 ## Status
 
-Phase 3 of `PLAN.md` is done except the live slot-limit check, which needs the
-real TorBox key: TorBox add/list/link calls, the 30 s poll loop, dedup, the atomic
-`state.json` job file, and the CLI. Not built yet: the Signal bot and chat routing
-(Phases 1 and 4).
+Phase 4 is partly done: the single-file vs zip `requestdl` branch, command parsing
+(`/help`, `/abb`, `/relink`), and chat-scoped relink are implemented and unit-tested.
+Not done yet: a live check that the returned links download, a multi-file end-to-end
+run, and the Signal bot itself (Phase 1). Commands are not reachable from chat yet.
 
 ## How it works
 
@@ -33,12 +33,14 @@ bot/
     config.py           # env parsing
     abb.py              # link validation (SSRF guard), scraping, magnet building
     torbox.py           # createtorrent / mylist / requestdl
-    jobs.py             # pending queue, poll loop, state file
+    jobs.py             # pending queue, poll loop, state file, relink
+    messages.py         # command parsing and reply templates
   tests/
     test_abb.py
     test_torbox.py
     test_jobs.py
     test_cli.py
+    test_messages.py
     fixtures/abb_detail.html   # saved real detail page
 ```
 

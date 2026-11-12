@@ -198,10 +198,14 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 ### 4. Delivery + error paths
 
-- [ ] `requestdl` with single-file vs zip branch; verify the returned URL downloads.
-- [ ] `/help`, `/abb`, and `/relink` routing; bare `/relink` uses the chat's last
-      delivery, `/relink <torrent_id>` picks a specific one.
-- [ ] Friendly failure messages; no stack traces to the chat.
+- [x] `requestdl` with single-file vs zip branch, covered by respx tests
+      (`jobs.link_for`); the live check that both URLs actually download is open.
+- [ ] Confirm a live single-file and a live zip link download from a real browser.
+- [x] `/help`, `/abb`, and `/relink` parsing in `messages.py`; bare `/relink` uses
+      the chat's last delivery, `/relink <torrent_id>` picks a specific one
+      (`jobs.relink`). Routing these from chat happens with Phase 1.
+- [x] Friendly failure messages: expected failures are one-line exceptions
+      (`AbbError`/`TorboxError`/`JobsError`), caught at the edge; no stack traces.
 - [ ] End-to-end from the CLI with a real audiobook under ~50 MB, then a multi-file one.
       Keep the first live ABB page as `tests/fixtures/abb_detail.html`.
 - [ ] Only then start Phase 1 (link the device, echo bot) and route the same calls from chat.

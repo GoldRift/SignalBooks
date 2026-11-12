@@ -71,18 +71,7 @@ async def _run(args: argparse.Namespace) -> int:
 async def _relink(api_key: str, torrent_id: int) -> int:
     """Manual escape hatch: request a fresh URL without touching the job state,
     so a still-pending job keeps its turn in the poll loop."""
-    items = await torbox.find_many(api_key, {torrent_id}, files=True)
-    item = items.get(torrent_id)
-    if item is None:
-        print(f"error: torrent {torrent_id} is not on TorBox", file=sys.stderr)
-        return 1
-    if not item.done:
-        print(
-            f"error: torrent {torrent_id} is not ready yet ({item.state or 'unknown'})",
-            file=sys.stderr,
-        )
-        return 1
-    print(await jobs.link_for(api_key, item))
+    print(await jobs.fresh_link(api_key, torrent_id))
     return 0
 
 

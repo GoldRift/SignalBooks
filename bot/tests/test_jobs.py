@@ -329,3 +329,91 @@ def test_a_seen_torrent_resets_the_miss_count_and_the_count_survives_a_restart(t
         assert asyncio.run(jobs.poll(KEY, state)) == []
 
     assert state.get(42, "cli")["misses"] == 0
+
+
+def delivered_state(tmp_path, *torrent_ids: int, chat: str = "cli") -> jobs.State:
+    state = jobs.State(tmp_path / "state.json")
+    for torrent_id in torrent_ids:
+        state.add(torrent_id, chat, f"book {torrent_id}", URL)
+        state.record_delivery(torrent_id, chat)
+    return state
+
+
+def test_relink_finds_the_link_for_the_last_delivered_torrent(tmp_path):
+    state = delivered_state(tmp_path, 42, 43)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item(42), item(43)]))
+        route = respx.get(f"{API}/requestdl").mock(return_value=link("https://cdn.example/relinked"))
+        url = asyncio.run(jobs.relink(KEY, state, "cli"))
+
+    assert url == "https://cdn.example/relinked"
+    assert route.call_count == 1
+    assert route.calls[0].request.url.params["torrent_id"] == "43"
+
+
+def test_relink_with_an_explicit_torrent_id_ignores_the_last_delivery(tmp_path):
+    state = delivered_state(tmp_path, 42, 43)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item(42), item(43)]))
+        route = respx.get(f"{API}/requestdl").mock(return_value=link())
+        asyncio.run(jobs.relink(KEY, state, "cli", 42))
+
+    assert route.calls[0].request.url.params["torrent_id"] == "42"
+
+
+def test_relink_with_nothing_delivered_makes_no_request(tmp_path):
+    state = pending_state(tmp_path)
+    # no routes: any HTTP call fails the test
+    with respx.mock, pytest.raises(jobs.JobsError, match="nothing delivered"):
+        asyncio.run(jobs.relink(KEY, state, "cli"))
+
+
+def test_relink_reports_a_torrent_torbox_no_longer_lists(tmp_path):
+    state = delivered_state(tmp_path, 42)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(return_value=mylist([]))
+        with pytest.raises(jobs.JobsError, match="not on TorBox"):
+            asyncio.run(jobs.relink(KEY, state, "cli"))
+
+
+def test_relink_waits_for_a_torrent_that_is_still_downloading(tmp_path):
+    state = delivered_state(tmp_path, 42)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(
+            return_value=mylist([item(42, download_state="downloading", download_finished=False)])
+        )
+        with pytest.raises(jobs.JobsError, match="not ready yet \\(downloading\\)"):
+            asyncio.run(jobs.relink(KEY, state, "cli"))
+
+
+def test_relink_only_sees_the_last_delivery_from_that_chat(tmp_path):
+    state = jobs.State(tmp_path / "state.json")
+    state.add(42, "alice", "book 42", URL)
+    state.record_delivery(42, "alice")
+    state.add(43, "group", "book 43", URL)
+    state.record_delivery(43, "group")
+
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item(42), item(43)]))
+        route = respx.get(f"{API}/requestdl").mock(return_value=link())
+        asyncio.run(jobs.relink(KEY, state, "alice"))
+
+    assert route.call_count == 1
+    assert route.calls[0].request.url.params["torrent_id"] == "42"
+
+
+def test_relink_leaves_the_state_untouched(tmp_path):
+    state = delivered_state(tmp_path, 42)
+    state.add(43, "cli", "book 43", URL)
+    before = json.loads(json.dumps(state.jobs))
+
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item(42), item(43)]))
+        respx.get(f"{API}/requestdl").mock(return_value=link())
+        asyncio.run(jobs.relink(KEY, state, "cli"))
+        # An explicit relink of a still-pending torrent must not mark it sent.
+        asyncio.run(jobs.relink(KEY, state, "cli", 43))
+
+    assert state.jobs == before
+    assert [torrent_id for _, torrent_id, _ in state.pending()] == [43]
+    assert state.get(43, "cli")["sent"] is False

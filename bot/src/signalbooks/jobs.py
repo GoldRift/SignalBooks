@@ -21,7 +21,8 @@ DEFAULT_STATE = pathlib.Path("state.json")
 
 
 class JobsError(Exception):
-    """Expected failure: unreadable or malformed state file."""
+    """Expected failure: chat-facing trouble with a job or an unreadable state
+    file. Callers turn the message into one line; it never reaches a chat raw."""
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,27 @@ async def link_for(api_key: str, torrent: torbox.Torrent) -> str:
     if len(torrent.files) > 1:
         return await torbox.request_link(api_key, torrent.id, zip_link=True)
     return await torbox.request_link(api_key, torrent.id, file_id=torrent.files[0].id)
+
+
+async def fresh_link(api_key: str, torrent_id: int) -> str:
+    """A new presigned URL for one stored torrent. Shared by chat ``/relink`` and
+    the CLI ``--link`` escape hatch."""
+    items = await torbox.find_many(api_key, {torrent_id}, files=True)
+    item = items.get(torrent_id)
+    if item is None:
+        raise JobsError(f"torrent {torrent_id} is not on TorBox")
+    if not item.done:
+        raise JobsError(f"torrent {torrent_id} is not ready yet ({item.state or 'unknown'})")
+    return await link_for(api_key, item)
+
+
+async def relink(api_key: str, state: State, chat: str, torrent_id: int | None = None) -> str:
+    """``/relink``: the chat's last delivered torrent unless one is named. Only
+    requestdl, so a still-pending job keeps its place in the poll loop."""
+    torrent_id = state.last_sent(chat) if torrent_id is None else torrent_id
+    if torrent_id is None:
+        raise JobsError("nothing delivered in this chat yet")
+    return await fresh_link(api_key, torrent_id)
 
 
 async def poll(api_key: str, state: State) -> list[Delivery]:
