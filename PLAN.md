@@ -95,7 +95,10 @@ python -m signalbooks --link <torrent_id>     # re-request a link for a stored t
   Extract title, author, info hash. Build `magnet:?xt=urn:btih:<hash>&dn=<title>`.
   Selectors are the fragile part — cover them with a saved-HTML fixture test.
 - `torbox.py`: base `https://api.torbox.app/v1/api`, `Authorization: Bearer $TORBOX_API_KEY`.
-  `createtorrent` is form-encoded (`magnet=...`); `mylist` and `requestdl` are GETs.
+  All three calls live under `/torrents/`: `POST /torrents/createtorrent` is
+  form-encoded (`magnet=...`); `GET /torrents/mylist` and
+  `GET /torrents/requestdl` are GETs (dropping the `torrents` segment returns 404
+  `Not Found`).
   `requestdl` also needs the API key as the `token` query param.
   Shapes confirmed from the published collection (see Phase 0): `createtorrent`
   returns `{hash, torrent_id}`; `mylist?files=true` items carry `download_finished`,
@@ -105,9 +108,12 @@ python -m signalbooks --link <torrent_id>     # re-request a link for a stored t
   Idle → no polling at all. `mylist` data is cached up to 600 s, so polls pass
   `bypass_cache=true` (and `files=true` when the file list is needed). `mylist`
   pages at 100 items, so walk pages until every pending id is seen. Persist
-  `{torrent_id: {chat, title, sent}}` to `state.json` with atomic write (tmp + rename)
-  so a restart doesn't lose replies.
-  Track delivery order per chat so `/relink` can find the most recent torrent.
+  `{"<chat>:<torrent_id>": {chat, title, url, added_at, sent, misses}}` to
+  `state.json` with atomic write (tmp + rename) so a restart doesn't lose replies.
+  Jobs are keyed per chat so the same torrent requested in two chats still gets two
+  replies. A reply is recorded only after it is sent: a crash repeats a reply rather
+  than losing it. Track delivery order per chat so `/relink` can find the most recent
+  torrent.
 - Dedup: ignore the same URL from the same chat within 10 minutes.
   Reuse TorBox's existing torrent id instead of re-adding (docs don't say
   `createtorrent` reports a duplicate, so look the hash up in `mylist` first).
@@ -116,8 +122,9 @@ python -m signalbooks --link <torrent_id>     # re-request a link for a stored t
   Confirmed: `zip_link=true` returns a `/zip/...` URL for a 7-file torrent.
 - Delivery does not delete the torrent: it stays on TorBox so a link can be
   re-requested after the ~3 h window. TorBox's slot limit decides throughput.
-- Excess requests wait in an explicit server-side queue. Submit up to the available
-  TorBox slots and drain the queue as jobs finish, so a burst of links never fails.
+- Excess adds are queued by TorBox itself (`queued_id`) and started later by its
+  scheduler; the bot keeps no queue of its own. A queued response is reported in one
+  line, never silently dropped.
 - Replies are minimal: "added", final link, or a one-line error. No progress spam.
   Errors surfaced to the user: bad/unsupported link, page fetch failed, TorBox
   rejected it, torrent errored/stalled, link request failed.
@@ -153,10 +160,12 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
       (cached item: `download_state: cached`, `progress: 1`, `files: 7`), and
       `requestdl` with `zip_link=true` on a 7-file torrent → a `/zip/...` CDN URL.
       So the zip branch works well below the 100-file auto-zip threshold.
-- [ ] Still open, defer to Phase 3: whether an add with all 3 slots busy comes back
-      with a `torrent_id` that starts by itself later, or needs `as_queued=true`
-      (which returns a `queued_id` instead, tracked via `queued/getqueued`). That
-      answer decides whether `jobs.py` keeps its own queue at all.
+- [x] Slot-full adds, answered from the SDK response model 2026-11-12 (not reproducible
+      on this account: cached audiobooks never occupy a slot): `createtorrent` returns
+      `queued_id` plus `active_limit`/`current_active_downloads` instead of `torrent_id`,
+      and TorBox's background process starts queued downloads later (up to a few hours)
+      without an `as_queued` call. So `jobs.py` keeps no queue of its own; a queued add
+      is a one-line error and writes no state.
 
 ### 1. Skeleton + Signal plumbing (after Phase 4)
 
@@ -179,10 +188,13 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 ### 3. TorBox + job loop
 
-- [ ] `createtorrent`, handle cached/immediate completion.
-- [ ] Poll loop, state file, restart resume.
-- [ ] Wire `--abb <url> [--dry-run|--wait]` and the manual `--link <torrent_id>` CLI
+- [x] `createtorrent`, handle cached/immediate completion.
+- [x] Poll loop, state file, restart resume.
+- [x] Wire `--abb <url> [--dry-run|--wait]` and the manual `--link <torrent_id>` CLI
       escape hatch for stuck jobs. These are the only surfaces used to test Phases 3–4.
+- [x] Live check settled in Phase 0: TorBox queues an add itself when all slots are
+      busy (`queued_id` in the response), so `jobs.py` keeps no queue and reports a
+      queued response as one line instead of failing obscurely.
 
 ### 4. Delivery + error paths
 
@@ -198,8 +210,9 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 - [ ] Allowlist and group enforcement tests (foreign sender, wrong group, self-sync).
 - [ ] Command tests: unknown command, `/relink` with nothing stored, malformed `/abb`.
-- [ ] Server-side queue: submit only what TorBox slots allow, drain queued jobs as
-      slots free; no fixed per-user cap.
+- [ ] Revisit only if uncached bursts show up: TorBox queues excess adds itself, so a
+      queued job is currently a one-line error. Tracking its `queued_id` via
+      `torrents/getqueued` is the only way to deliver a link for it automatically.
 - [ ] Log redaction: never log message bodies, API keys, or presigned URLs.
 - [ ] Pin `signal-cli`; document the quarterly update (Signal breaks old clients).
 
