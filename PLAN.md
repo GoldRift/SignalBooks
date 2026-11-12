@@ -13,7 +13,7 @@ download, and replies with a TorBox download link.
 | Delivery | `requestdl` link, sent back as a Signal text message. Link must be opened within ~3 h; after the download starts it is not time-limited. |
 | Hosting | Docker Compose on an always-on box: `signal-cli` service + `bot` service, shared socket volume. |
 | Access | Allowlist of sender numbers. Private chat first; one configured private group only after the private flow is tested. |
-| Prereqs | TorBox paid plan + API key, Signal account to link, ABB account (login required to read the magnet hash; session cookie in `ABB_COOKIE`). |
+| Prereqs | TorBox paid plan + API key, Signal account to link. No ABB account: the info hash is readable anonymously (verified 2026-11-12), so `ABB_COOKIE` is optional and only set if a login gate returns. |
 | Build order | **Pipeline first, bot second.** `abb → torbox → jobs` must run end-to-end from a CLI against live ABB/TorBox before any Signal code is written. The bot is then a thin adapter over the same modules — no throwaway scripts, no rework. |
 
 ## Flow
@@ -85,10 +85,14 @@ python -m signalbooks --link <torrent_id>     # re-request a link for a stored t
   Ignore `syncMessage`, and ignore `dataMessage` where `sourceNumber == account`
   (your own messages from the phone come back as sync traffic).
 - `abb.py`: accept only hosts in a configured ABB-domain allowlist (blocks SSRF);
-  the single supported mirror is `https://audiobookbay.lu/`. Fetch the detail page
-  with a browser UA and the logged-in session cookie from `ABB_COOKIE` — ABB requires
-  login before the magnet hash is present. Extract title, author, info hash. Build
-  `magnet:?xt=urn:btih:<hash>&dn=<title>`.
+  the single supported mirror is `https://audiobookbay.lu/`. Accepted link forms:
+  `/abss/<slug>/` (current, and what `/audio-books/<slug>/` is rewritten to),
+  `/audio-books/<slug>/`. The old `?p=<id>` form is dead on `.lu` (empty 301), so
+  it is rejected at parse time rather than failing at fetch. Fetch the detail page
+  with a browser UA; send `ABB_COOKIE` when set but do not require it — the hash is
+  served anonymously. Redirects are not followed, so the cookie can never leave the
+  allowlist.
+  Extract title, author, info hash. Build `magnet:?xt=urn:btih:<hash>&dn=<title>`.
   Selectors are the fragile part — cover them with a saved-HTML fixture test.
 - `torbox.py`: base `https://api.torbox.app/v1/api`, `Authorization: Bearer $TORBOX_API_KEY`.
   `createtorrent` is form-encoded (`magnet=...`); `mylist` and `requestdl` are GETs.
@@ -126,8 +130,11 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 ### 0. Preflight
 
-- [x] ABB base is `https://audiobookbay.lu/`; login is required to read the magnet
-      hash, so a session cookie (`ABB_COOKIE`) is mandatory.
+- [x] ABB base is `https://audiobookbay.lu/`. Live check 2026-11-12: detail pages are
+      `/abss/<slug>/`, the info hash sits in a plain `<td>` and is visible without
+      login; `/audio-books/<slug>/` and `?p=<id>` answer with an empty 301. So no
+      ABB account is needed and `ABB_COOKIE` is optional — keep it supported in case
+      a login gate or Cloudflare challenge returns.
 - [x] Keep completed torrents on TorBox so links can be re-requested; TorBox's slots
       decide throughput, with excess requests queued server-side.
 - [x] TorBox endpoint shapes read off the published API collection: `createtorrent`
@@ -164,9 +171,11 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 ### 2. ABB → magnet
 
-- [ ] URL parser for both `/audio-books/<slug>/` and `?p=<id>` forms; reject everything else.
-- [ ] Scraper + fixture test from a saved page.
-- [ ] Magnet builder test (hash casing, URL-encoded title).
+- [x] URL parser for `/abss/<slug>/` and `/audio-books/<slug>/` (rewritten to
+      `/abss/`); rejects everything else, including the dead `?p=<id>` form.
+- [x] Scraper + fixture test from a saved page (`bot/tests/fixtures/abb_detail.html`,
+      a real logged-out detail page).
+- [x] Magnet builder test (hash casing, URL-encoded title).
 
 ### 3. TorBox + job loop
 
