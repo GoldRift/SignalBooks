@@ -14,6 +14,7 @@ download, and replies with a TorBox download link.
 | Hosting | Docker Compose on an always-on box: `signal-cli` service + `bot` service, shared socket volume. |
 | Access | Allowlist of sender numbers. Private chat first; one configured private group only after the private flow is tested. |
 | Prereqs | TorBox paid plan + API key, Signal account to link, ABB account (login required to read the magnet hash; session cookie in `ABB_COOKIE`). |
+| Build order | **Pipeline first, bot second.** `abb → torbox → jobs` must run end-to-end from a CLI against live ABB/TorBox before any Signal code is written. The bot is then a thin adapter over the same modules — no throwaway scripts, no rework. |
 
 ## Flow
 
@@ -59,7 +60,7 @@ SignalBooks/
     Dockerfile
     pyproject.toml        # httpx, selectolax (or bs4), pytest+respx (dev)
     src/signalbooks/
-      __main__.py         # asyncio entrypoint, command routing, wiring
+      __main__.py         # CLI entrypoint (--abb/--link/--dry-run) first; Signal routing added last
       config.py           # env parsing + validation
       signal.py           # JSON-RPC client: receive notifications, send
       abb.py              # URL validation, page fetch, scrape → Book
@@ -67,6 +68,16 @@ SignalBooks/
       jobs.py             # pending queue, 30 s poll loop, JSON state file
       messages.py         # reply templates
     tests/
+```
+
+The CLI is the build/test harness, not a debug afterthought — Phase 4 is proven here,
+not in a chat window. The bot then calls the same functions:
+
+```sh
+cd bot
+python -m signalbooks --abb <url> --dry-run   # scrape only: title, author, info hash
+python -m signalbooks --abb <url> --wait      # add, poll, print the download link
+python -m signalbooks --link <torrent_id>     # re-request a link for a stored torrent
 ```
 
 - `signal.py`: connect to the Unix socket with `asyncio.open_unix_connection`,
@@ -109,6 +120,10 @@ SignalBooks/
 
 ## Phases
 
+Phases run in number order except Phase 1: Signal plumbing comes **after** Phase 4.
+Everything before it is validated from the CLI, so a signal-cli surprise only touches
+`signal.py` and never blocks the pipeline.
+
 ### 0. Preflight
 
 - [x] ABB base is `https://audiobookbay.lu/`; login is required to read the magnet
@@ -136,7 +151,7 @@ SignalBooks/
       (which returns a `queued_id` instead, tracked via `queued/getqueued`). That
       answer decides whether `jobs.py` keeps its own queue at all.
 
-### 1. Skeleton + Signal plumbing
+### 1. Skeleton + Signal plumbing (after Phase 4)
 
 - [ ] `docker-compose.yml`: `signal-cli` service (pinned version, data volume) and `bot`
       service (shared `/run/signal-cli` socket volume, `restart: unless-stopped`).
@@ -157,8 +172,8 @@ SignalBooks/
 
 - [ ] `createtorrent`, handle cached/immediate completion.
 - [ ] Poll loop, state file, restart resume.
-- [ ] Manual `--link <torrent_id>` CLI escape hatch for stuck jobs (used before the bot
-      has its own resend command).
+- [ ] Wire `--abb <url> [--dry-run|--wait]` and the manual `--link <torrent_id>` CLI
+      escape hatch for stuck jobs. These are the only surfaces used to test Phases 3–4.
 
 ### 4. Delivery + error paths
 
@@ -166,7 +181,9 @@ SignalBooks/
 - [ ] `/help`, `/abb`, and `/relink` routing; bare `/relink` uses the chat's last
       delivery, `/relink <torrent_id>` picks a specific one.
 - [ ] Friendly failure messages; no stack traces to the chat.
-- [ ] End-to-end run with a real audiobook under ~50 MB, then a multi-file one.
+- [ ] End-to-end from the CLI with a real audiobook under ~50 MB, then a multi-file one.
+      Keep the first live ABB page as `tests/fixtures/abb_detail.html`.
+- [ ] Only then start Phase 1 (link the device, echo bot) and route the same calls from chat.
 
 ### 5. Hardening
 
