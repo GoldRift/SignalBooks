@@ -169,14 +169,14 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 ### 1. Skeleton + Signal plumbing (after Phase 4)
 
-- [ ] `docker-compose.yml`: `signal-cli` service (pinned version, data volume) and `bot`
+- [x] `docker-compose.yml`: `signal-cli` service (pinned version, data volume) and `bot`
       service (shared `/run/signal-cli` socket volume, `restart: unless-stopped`).
-- [ ] Link the device: `docker compose run --rm signal-cli link -n SignalBooks`, scan QR
+- [x] Link the device: `docker compose run --rm signal-cli link -n SignalBooks`, scan QR
       from Signal → Settings → Linked devices. (Linking needs no spare number; it becomes
       a linked device on your existing account. A separate number would have to be registered.)
-- [ ] Echo bot: log incoming messages, reply "pong". Prove receive + send in a 1:1
-      chat first; add the private group only after the private flow works.
-- [ ] `.env.example`, `.gitignore`, README with the link procedure.
+- [x] Echo bot: log incoming messages, reply "pong". Proved in a 1:1 chat 2026-11-14;
+      the private group still waits for the 1:1 flow to be routed end-to-end.
+- [x] `.env.example`, `.gitignore`, README with the link procedure.
 
 ### 2. ABB → magnet
 
@@ -209,7 +209,8 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
       (`AbbError`/`TorboxError`/`JobsError`), caught at the edge; no stack traces.
 - [ ] End-to-end from the CLI with a real audiobook under ~50 MB, then a multi-file one.
       Keep the first live ABB page as `tests/fixtures/abb_detail.html`.
-- [ ] Only then start Phase 1 (link the device, echo bot) and route the same calls from chat.
+- [x] Phase 1 is done (device linked, echo bot answers in a 1:1 chat, 2026-11-14).
+- [ ] Route `/help`, `/abb`, and `/relink` from chat through the Phase 1 loop.
 
 ### 5. Hardening
 

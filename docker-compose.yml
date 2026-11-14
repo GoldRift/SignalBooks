@@ -1,0 +1,44 @@
+services:
+  signal-cli:
+    # v0.14.10 (pinned; bump deliberately)
+    image: ghcr.io/asamk/signal-cli@sha256:34b52a33a89ce832fece924a78da811c789945ccc189dd6244f6c8d36c5aa4ff
+    restart: unless-stopped
+    # The image's own user has no stable numeric uid across builds, so start as
+    # root, make the socket dir permissive, then drop to it.
+    user: "0:0"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        # A hard-killed daemon leaves its socket file behind; only a daemon run clears it.
+        case " $$* " in *" daemon "*) rm -f /run/signal-cli/socket ;; esac
+        chmod 777 /run/signal-cli
+        umask 000
+        exec setpriv --reuid="$$(id -u signal-cli)" --regid="$$(id -g signal-cli)" --clear-groups \
+          /opt/signal-cli/bin/signal-cli --config=/var/lib/signal-cli "$$@"
+      # $0 for the wrapper; the service command arrives as "$@".
+      - sh
+    command: ["-a", "${SIGNAL_ACCOUNT}", "daemon", "--socket=/run/signal-cli/socket"]
+    volumes:
+      - signal-cli-data:/var/lib/signal-cli
+      - signal-cli-socket:/run/signal-cli
+    tmpfs:
+      - /tmp:exec
+
+  bot:
+    build: ./bot
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - signal-cli
+    working_dir: /state
+    environment:
+      SIGNAL_SOCKET: /run/signal-cli/socket
+    volumes:
+      - signal-cli-socket:/run/signal-cli
+      - bot-state:/state
+
+volumes:
+  signal-cli-data:
+  signal-cli-socket:
+  bot-state:
