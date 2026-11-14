@@ -27,7 +27,8 @@ over the same modules.
 
 ## Commands
 
-1:1 chats from allowlisted numbers only. A bare ABB link is shorthand for `/abb`.
+1:1 chats from allowlisted numbers only. Only messages that start with a command
+are answered; anything else is ignored.
 
 | Message | What happens |
 | --- | --- |
@@ -133,8 +134,8 @@ published. The linked-device keys and `state.json` live in named volumes
 (`signal-cli-data`, `bot-state`), so nothing lands on the host and nothing is
 committed.
 
-Send `/help`, `/relink`, or an AudiobookBay link in a 1:1 chat to use it; the
-private group is not enabled yet.
+Send `/help`, `/relink`, or `/abb <link>` in a 1:1 chat to use it; the private
+group is not enabled yet.
 
 ## Configuration
 

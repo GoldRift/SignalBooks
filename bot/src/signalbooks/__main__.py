@@ -119,6 +119,8 @@ async def _receive_loop(client: signal.Client, cfg: config.Config, state: jobs.S
             print(f"ignoring a message from {message.sender}", file=sys.stderr)
             continue
         command = messages.parse(message.text)
+        if command.kind == "ignore":
+            continue
         print(f"serving {command.kind} for {message.sender}", file=sys.stderr)
         try:
             await _answer(client, cfg, state, message.sender, command)
@@ -141,7 +143,7 @@ async def _answer(
         book = await abb.fetch_book(command.argument, cfg.abb_cookie)
         added = await jobs.add(cfg.torbox_api_key, state, chat, book)
         await client.send(chat, messages.added(added.title, added.duplicate))
-    else:  # relink
+    elif command.kind == "relink":
         torrent_id = int(command.argument) if command.argument else None
         await client.send(chat, await jobs.relink(cfg.torbox_api_key, state, chat, torrent_id))
 

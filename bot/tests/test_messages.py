@@ -25,12 +25,12 @@ def test_abb_takes_the_link_as_its_argument():
     assert messages.parse(f"/abb {URL}") == Command("abb", URL)
 
 
-def test_a_bare_link_is_shorthand_for_abb():
-    assert messages.parse(URL) == Command("abb", URL)
+def test_a_bare_link_is_ignored():
+    assert messages.parse(URL) == Command("ignore")
 
 
 def test_surrounding_whitespace_is_dropped():
-    assert messages.parse(f"  {URL}\n") == Command("abb", URL)
+    assert messages.parse(f"  /abb {URL}\n") == Command("abb", URL)
 
 
 def test_relink_without_an_argument_uses_the_last_delivery():
@@ -54,12 +54,12 @@ def test_an_unknown_command_gets_the_usage_reply():
 
 
 def test_a_plain_text_message_is_not_a_command():
-    assert messages.parse("hello there") == Command("abb", "hello there")
+    assert messages.parse("hello there") == Command("ignore")
 
 
 @pytest.mark.parametrize("text", ["", "/", "  "])
 def test_parse_never_raises_on_odd_input(text):
-    assert messages.parse(text) in (Command("abb", ""), Command("usage"))
+    assert messages.parse(text) in (Command("ignore"), Command("usage"))
 
 
 def test_the_templates_name_every_command():

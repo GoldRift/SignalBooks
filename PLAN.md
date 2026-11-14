@@ -36,7 +36,9 @@ No torrent data passes through our box. No file re-hosting.
 ## Commands
 
 Messages may start with a command. Allowlist and group checks apply to commands too.
-Bare ABB links stay accepted as shorthand for `/abb`.
+Only messages that start with a command are answered. Plain chatter and bare links
+are ignored, so a group conversation stays quiet and the bot never fetches a page
+it was not asked for.
 
 | Command | Behavior |
 | --- | --- |

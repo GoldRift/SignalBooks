@@ -12,7 +12,7 @@ USAGE = f"unknown command. {HELP}"
 
 @dataclass(frozen=True)
 class Command:
-    kind: str  # "help" | "abb" | "relink" | "usage"
+    kind: str  # "help" | "abb" | "relink" | "usage" | "ignore"
     argument: str = ""
 
 
@@ -27,11 +27,11 @@ def permitted(sender: str, group: str | None, allowed: frozenset[str]) -> bool:
 
 
 def parse(text: str) -> Command:
-    """Classify one message. A bare link is shorthand for ``/abb``; anything that
-    is not a known command comes back as a usage reply, never an exception."""
+    """Classify one message. Only slash commands are answered; anything else —
+    plain chatter, bare links — is ignored so a group's conversation stays quiet."""
     stripped = text.strip()
     if not stripped.startswith("/"):
-        return Command("abb", stripped)
+        return Command("ignore")
     parts = stripped.split(maxsplit=1)
     head = parts[0].lower()
     argument = parts[1] if len(parts) > 1 else ""

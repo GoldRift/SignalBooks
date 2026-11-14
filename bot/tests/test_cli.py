@@ -273,6 +273,12 @@ def test_serve_relink_reports_a_torrent_torbox_no_longer_lists(tmp_path, monkeyp
     assert sent[0]["params"]["message"] == "error: torrent 42 is not on TorBox"
 
 
+def test_serve_ignores_a_bare_link_and_plain_chatter(tmp_path, monkeypatch):
+    sent = run_serve(tmp_path, monkeypatch, ABB_URL, "just talking", replies=0, wait=0.4)
+
+    assert sent == []
+
+
 def test_serve_adds_a_link_and_delivers_its_url(tmp_path, monkeypatch):
     with respx.mock:
         respx.get(ABB_URL).mock(return_value=httpx.Response(200, text=FIXTURE.read_text()))
@@ -280,7 +286,7 @@ def test_serve_adds_a_link_and_delivers_its_url(tmp_path, monkeypatch):
         respx.get(f"{API}/requestdl").mock(
             return_value=httpx.Response(200, json={"success": True, "data": "https://cdn/x.zip"})
         )
-        sent = run_serve(tmp_path, monkeypatch, ABB_URL, replies=2)
+        sent = run_serve(tmp_path, monkeypatch, f"/abb {ABB_URL}", replies=2)
 
     texts = [request["params"]["message"] for request in sent]
     assert "added: Test Book - Ada Example" in texts
