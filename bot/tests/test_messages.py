@@ -65,3 +65,11 @@ def test_parse_never_raises_on_odd_input(text):
 def test_the_templates_name_every_command():
     assert "/help" in HELP and "/abb" in HELP and "/relink" in HELP
     assert HELP in USAGE and "unknown command" in USAGE
+
+
+def test_only_a_direct_message_from_an_allowlisted_number_is_answered():
+    allowed = frozenset({"+15550000001"})
+
+    assert messages.permitted("+15550000001", None, allowed)
+    assert not messages.permitted("+15559999999", None, allowed)
+    assert not messages.permitted("+15550000001", "group==", allowed)

@@ -16,6 +16,12 @@ class Command:
     argument: str = ""
 
 
+def permitted(sender: str, group: str | None, allowed: frozenset[str]) -> bool:
+    """Chat access policy: direct messages from an allowlisted number only. The
+    private group opens after the 1:1 flow is proven."""
+    return group is None and sender in allowed
+
+
 def parse(text: str) -> Command:
     """Classify one message. A bare link is shorthand for ``/abb``; anything that
     is not a known command comes back as a usage reply, never an exception."""
