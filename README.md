@@ -120,6 +120,14 @@ Compose.
    docker compose up -d --build
    ```
 
+After a code change, rebuild **and** recreate — podman-compose in particular
+rebuilds the image without replacing the running container, which keeps old code
+answering:
+
+   ```sh
+   docker compose up -d --build --force-recreate bot
+   ```
+
 `signal-cli` and `bot` talk over a Unix socket on a shared named volume; no port is
 published. The linked-device keys and `state.json` live in named volumes
 (`signal-cli-data`, `bot-state`), so nothing lands on the host and nothing is
