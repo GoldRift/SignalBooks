@@ -16,6 +16,10 @@ class Command:
     argument: str = ""
 
 
+def added(title: str, duplicate: bool = False) -> str:
+    return f"{'already added' if duplicate else 'added'}: {title}"
+
+
 def permitted(sender: str, group: str | None, allowed: frozenset[str]) -> bool:
     """Chat access policy: direct messages from an allowlisted number only. The
     private group opens after the 1:1 flow is proven."""

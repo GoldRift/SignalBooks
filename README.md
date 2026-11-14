@@ -8,10 +8,11 @@ link. No torrent data passes through this box and nothing is re-hosted.
 ## Status
 
 Phase 1 is proven: the device is linked, `signal-cli` and the bot run under compose,
-and an allowlisted number gets a reply in a 1:1 chat. The bot is still an echo bot
-(it replies "pong"); routing `/help`, `/abb`, and `/relink` comes next. On the
-pipeline side, the single-file and zip links are confirmed working against live
-TorBox, and command parsing plus chat-scoped relink are implemented and unit-tested.
+and an allowlisted number gets a reply in a 1:1 chat. Chat routing is wired too:
+`/help`, `/abb`, and `/relink` go through the same modules as the CLI and are
+covered end-to-end against a stand-in daemon. The single-file and zip links are
+confirmed working against live TorBox. The one step not yet exercised is a live
+link send from a phone.
 
 ## How it works
 
@@ -23,6 +24,17 @@ Signal msg → signal-cli daemon → bot
 
 The pipeline below the bot runs today from the CLI; the bot is a thin adapter
 over the same modules.
+
+## Commands
+
+1:1 chats from allowlisted numbers only. A bare ABB link is shorthand for `/abb`.
+
+| Message | What happens |
+| --- | --- |
+| `/help` | One-line list of the commands. |
+| `/abb <link>` | Adds the torrent and replies `added: <title>`, then the download link when it is ready. |
+| `/relink` | A fresh link for the last book delivered in this chat. |
+| `/relink <torrent_id>` | A fresh link for that specific torrent; never re-adds or consumes a TorBox slot. |
 
 ## Layout
 
@@ -113,9 +125,8 @@ published. The linked-device keys and `state.json` live in named volumes
 (`signal-cli-data`, `bot-state`), so nothing lands on the host and nothing is
 committed.
 
-The Signal bot answers in a 1:1 chat today, but only with "pong": command routing is
-the next step. The pipeline from the CLI (see above) is what actually adds and
-delivers audiobooks for now.
+Send `/help`, `/relink`, or an AudiobookBay link in a 1:1 chat to use it; the
+private group is not enabled yet.
 
 ## Configuration
 

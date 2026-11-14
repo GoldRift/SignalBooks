@@ -80,32 +80,86 @@ async def _relink(api_key: str, torrent_id: int) -> int:
 
 
 async def _serve(cfg: config.Config) -> int:
-    """Phase 1 echo bot: prove receive + send before any routing exists."""
-    if not cfg.signal_account or not cfg.allowed_numbers:
+    """Answer allowlisted chats through the same modules the CLI uses, and deliver
+    finished jobs on the poll loop while the socket is up."""
+    if not cfg.signal_account or not cfg.allowed_numbers or not cfg.torbox_api_key:
         print(
-            "error: SIGNAL_ACCOUNT and SIGNAL_ALLOWED_NUMBERS are required for --serve",
+            "error: SIGNAL_ACCOUNT, SIGNAL_ALLOWED_NUMBERS and TORBOX_API_KEY are required for --serve",
             file=sys.stderr,
         )
         return 1
+    state = jobs.State()
     while True:
         client = signal.Client(cfg.signal_socket, cfg.signal_account)
         try:
             await client.connect()
             print(f"connected to signal-cli at {cfg.signal_socket}", file=sys.stderr)
-            while (message := await client.next_message()) is not None:
-                if not messages.permitted(message.sender, message.group, cfg.allowed_numbers):
-                    print(f"ignoring a message from {message.sender}", file=sys.stderr)
-                    continue
-                print(f"message from {message.sender} ({len(message.text)} chars)", file=sys.stderr)
-                try:
-                    await client.send(message.sender, "pong")
-                except signal.SignalError as exc:
-                    print(str(exc), file=sys.stderr)
+            tasks = {
+                asyncio.create_task(_receive_loop(client, cfg, state)),
+                asyncio.create_task(_poll_loop(client, cfg, state)),
+            }
+            try:
+                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            for task in done:
+                task.result()  # a SignalError tears the connection down for a retry
         except signal.SignalError as exc:
             print(str(exc), file=sys.stderr)
         finally:
             await client.close()
         await asyncio.sleep(RETRY_SECONDS)
+
+
+async def _receive_loop(client: signal.Client, cfg: config.Config, state: jobs.State) -> None:
+    while (message := await client.next_message()) is not None:
+        if not messages.permitted(message.sender, message.group, cfg.allowed_numbers):
+            print(f"ignoring a message from {message.sender}", file=sys.stderr)
+            continue
+        command = messages.parse(message.text)
+        print(f"serving {command.kind} for {message.sender}", file=sys.stderr)
+        try:
+            await _answer(client, cfg, state, message.sender, command)
+        except (abb.AbbError, torbox.TorboxError, jobs.JobsError) as exc:
+            await client.send(message.sender, f"error: {exc}")
+
+
+async def _answer(
+    client: signal.Client,
+    cfg: config.Config,
+    state: jobs.State,
+    chat: str,
+    command: messages.Command,
+) -> None:
+    if command.kind == "help":
+        await client.send(chat, messages.HELP)
+    elif command.kind == "usage":
+        await client.send(chat, messages.USAGE)
+    elif command.kind == "abb":
+        book = await abb.fetch_book(command.argument, cfg.abb_cookie)
+        added = await jobs.add(cfg.torbox_api_key, state, chat, book)
+        await client.send(chat, messages.added(added.title, added.duplicate))
+    else:  # relink
+        torrent_id = int(command.argument) if command.argument else None
+        await client.send(chat, await jobs.relink(cfg.torbox_api_key, state, chat, torrent_id))
+
+
+async def _poll_loop(client: signal.Client, cfg: config.Config, state: jobs.State) -> None:
+    """One mylist walk per cycle for every pending job; no HTTP at all when idle."""
+    while True:
+        if state.pending():
+            try:
+                deliveries = await jobs.poll(cfg.torbox_api_key, state)
+            except torbox.TorboxError as exc:
+                print(f"poll failed: {exc}", file=sys.stderr)
+                deliveries = []
+            for delivery in deliveries:
+                await client.send(delivery.chat, delivery.url or f"error: {delivery.error}")
+                state.record_delivery(delivery.torrent_id, delivery.chat)
+                state.save()
+        await asyncio.sleep(jobs.POLL_SECONDS)
 
 
 def _show(delivery: jobs.Delivery) -> int:

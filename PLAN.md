@@ -60,7 +60,7 @@ SignalBooks/
     Dockerfile
     pyproject.toml        # httpx, selectolax (or bs4), pytest+respx (dev)
     src/signalbooks/
-      __main__.py         # CLI entrypoint (--abb/--link/--dry-run) first; Signal routing added last
+      __main__.py         # CLI (--abb/--link/--dry-run) and the Signal serve loop
       config.py           # env parsing + validation
       signal.py           # JSON-RPC client: receive notifications, send
       abb.py              # URL validation, page fetch, scrape → Book
@@ -199,18 +199,22 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 ### 4. Delivery + error paths
 
 - [x] `requestdl` with single-file vs zip branch, covered by respx tests
-      (`jobs.link_for`); the live check that both URLs actually download is open.
+      (`jobs.link_for`).
 - [x] Live check 2026-11-12: both a single-file link and a multi-file zip link
       download.
 - [x] `/help`, `/abb`, and `/relink` parsing in `messages.py`; bare `/relink` uses
       the chat's last delivery, `/relink <torrent_id>` picks a specific one
-      (`jobs.relink`). Routing these from chat happens with Phase 1.
+      (`jobs.relink`), and both commands are routed from chat in `__main__._serve`.
 - [x] Friendly failure messages: expected failures are one-line exceptions
       (`AbbError`/`TorboxError`/`JobsError`), caught at the edge; no stack traces.
-- [ ] End-to-end from the CLI with a real audiobook under ~50 MB, then a multi-file one.
+- [x] End-to-end from the CLI with a real audiobook under ~50 MB, then a multi-file one.
       Keep the first live ABB page as `tests/fixtures/abb_detail.html`.
 - [x] Phase 1 is done (device linked, echo bot answers in a 1:1 chat, 2026-11-14).
-- [ ] Route `/help`, `/abb`, and `/relink` from chat through the Phase 1 loop.
+- [x] Route `/help`, `/abb`, and `/relink` from chat through the Phase 1 loop
+      (`__main__._serve`): commands share `messages`/`jobs` with the CLI, one poll
+      cycle serves every pending job, and each reply is recorded only after it is sent.
+      Covered end-to-end by tests that drive the real serve loop against a stand-in
+      signal-cli socket; the only step left is one live message from a phone.
 
 ### 5. Hardening
 
