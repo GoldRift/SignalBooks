@@ -215,8 +215,8 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 - [x] Route `/help`, `/abb`, and `/relink` from chat through the Phase 1 loop
       (`__main__._serve`): commands share `messages`/`jobs` with the CLI, one poll
       cycle serves every pending job, and each reply is recorded only after it is sent.
-      Covered end-to-end by tests that drive the real serve loop against a stand-in
-      signal-cli socket; the only step left is one live message from a phone.
+      Covered by tests that drive the real serve loop against a stand-in daemon, and
+      live on 2026-11-14 (a real ABB link was added from chat and its link delivered).
 
 ### 5. Hardening
 

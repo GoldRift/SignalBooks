@@ -8,11 +8,10 @@ link. No torrent data passes through this box and nothing is re-hosted.
 ## Status
 
 Phase 1 is proven: the device is linked, `signal-cli` and the bot run under compose,
-and an allowlisted number gets a reply in a 1:1 chat. Chat routing is wired too:
-`/help`, `/abb`, and `/relink` go through the same modules as the CLI and are
-covered end-to-end against a stand-in daemon. The single-file and zip links are
-confirmed working against live TorBox. The one step not yet exercised is a live
-link send from a phone.
+and an allowlisted number gets a reply in a 1:1 chat. Chat routing works: `/help`,
+`/abb`, and `/relink` go through the same modules as the CLI, and a real ABB link
+was added and delivered from chat. The single-file and zip links are confirmed
+working against live TorBox.
 
 ## How it works
 
