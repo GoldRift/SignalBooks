@@ -144,7 +144,7 @@ def test_add_creates_a_torrent_when_the_hash_is_new(tmp_path):
 
     assert added.torrent_id == 7
     body = urllib.parse.parse_qsl(route.calls[0].request.content.decode())
-    assert ("magnet", f"magnet:?xt=urn:btih:{HASH}&dn=Test Book%20-%20Ada%20Example") in body
+    assert ("magnet", f"magnet:?xt=urn:btih:{HASH}&dn=Test%20Book%20-%20Ada%20Example") in body
     assert state.get(7, "cli")["title"] == "Test Book - Ada Example"
 
 
