@@ -82,6 +82,12 @@ def test_a_direct_message_arrives_with_its_sender_and_text(tmp_path):
 def test_a_group_message_carries_its_group_id(tmp_path):
     message = run(tmp_path, feed(receive(data_message(group="group=="))), _first)
     assert message == signal.Incoming(OTHER, "hello", "group==")
+    assert message.chat == "group:group=="
+
+
+def test_a_direct_message_replies_to_the_sender(tmp_path):
+    message = run(tmp_path, feed(receive(data_message())), _first)
+    assert message.chat == OTHER
 
 
 def test_sync_traffic_is_ignored(tmp_path):
@@ -147,6 +153,22 @@ def test_send_writes_a_json_rpc_request_and_waits_for_the_answer(tmp_path):
 
     assert seen[0]["method"] == "send"
     assert seen[0]["params"] == {"recipient": [OTHER], "message": "pong"}
+
+
+def test_a_group_chat_is_sent_by_group_id_not_recipient(tmp_path):
+    seen: list = []
+
+    async def action(socket_path):
+        client = signal.Client(socket_path, ACCOUNT)
+        await client.connect()
+        try:
+            await asyncio.wait_for(client.send("group:group==", "pong"), 5)
+        finally:
+            await client.close()
+
+    run(tmp_path, answer({"result": {"timestamp": 1}}, seen), action)
+
+    assert seen[0]["params"] == {"groupId": "group==", "message": "pong"}
 
 
 def test_a_rejected_request_raises_a_one_line_error(tmp_path):

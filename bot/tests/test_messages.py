@@ -73,3 +73,22 @@ def test_only_a_direct_message_from_an_allowlisted_number_is_answered():
     assert messages.permitted("+15550000001", None, allowed)
     assert not messages.permitted("+15559999999", None, allowed)
     assert not messages.permitted("+15550000001", "group==", allowed)
+
+
+def test_a_group_message_is_answered_only_in_the_configured_group():
+    allowed = frozenset({"+15550000001"})
+
+    assert messages.permitted("+15550000001", "group==", allowed, "group==")
+    assert not messages.permitted("+15550000001", "group==", allowed, "other==")
+    assert not messages.permitted("+15550000001", "group==", allowed, None)
+
+
+def test_every_member_of_the_configured_group_is_trusted():
+    allowed = frozenset({"+15550000001"})
+
+    assert messages.permitted("+15559999999", "group==", allowed, "group==")
+    assert not messages.permitted("+15559999999", None, allowed, "group==")
+
+
+def test_a_group_alone_leaves_direct_messages_closed():
+    assert messages.permitted("+15559999999", None, frozenset(), "group==") is False

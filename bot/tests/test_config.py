@@ -13,6 +13,7 @@ def test_everything_defaults_to_empty_so_the_cli_can_pass_the_checks_it_needs():
     assert cfg.signal_account == ""
     assert cfg.signal_socket == pathlib.Path("/run/signal-cli/socket")
     assert cfg.allowed_numbers == frozenset()
+    assert cfg.signal_group_id is None
 
 
 def test_the_signal_allowlist_is_split_on_commas_and_trimmed():
@@ -29,3 +30,8 @@ def test_the_socket_path_can_be_overridden():
 
 def test_an_empty_cookie_counts_as_unset():
     assert config.load({"ABB_COOKIE": "  "}).abb_cookie is None
+
+
+def test_the_group_id_is_optional_and_empty_counts_as_unset():
+    assert config.load({"SIGNAL_GROUP_ID": "r2V4=="}).signal_group_id == "r2V4=="
+    assert config.load({"SIGNAL_GROUP_ID": "  "}).signal_group_id is None

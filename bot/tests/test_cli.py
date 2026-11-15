@@ -160,13 +160,24 @@ def test_abb_needs_a_mode():
     assert exc.value.code == 2
 
 
-def test_serve_refuses_to_start_without_an_account_and_allowlist(monkeypatch, capsys):
+def test_serve_refuses_to_start_without_an_account_and_torbox_key(monkeypatch, capsys):
     monkeypatch.delenv("SIGNAL_ACCOUNT", raising=False)
     monkeypatch.delenv("SIGNAL_ALLOWED_NUMBERS", raising=False)
+    monkeypatch.delenv("SIGNAL_GROUP_ID", raising=False)
     monkeypatch.setenv("TORBOX_API_KEY", "test-key")
     assert cli.main(["--serve"]) == 1
 
-    assert "SIGNAL_ACCOUNT, SIGNAL_ALLOWED_NUMBERS and TORBOX_API_KEY" in capsys.readouterr().err
+    assert "SIGNAL_ACCOUNT and TORBOX_API_KEY" in capsys.readouterr().err
+
+
+def test_serve_refuses_to_start_with_no_chat_it_could_answer(monkeypatch, capsys):
+    monkeypatch.setenv("SIGNAL_ACCOUNT", "+15550000001")
+    monkeypatch.delenv("SIGNAL_ALLOWED_NUMBERS", raising=False)
+    monkeypatch.delenv("SIGNAL_GROUP_ID", raising=False)
+    monkeypatch.setenv("TORBOX_API_KEY", "test-key")
+    assert cli.main(["--serve"]) == 1
+
+    assert "SIGNAL_ALLOWED_NUMBERS or SIGNAL_GROUP_ID" in capsys.readouterr().err
 
 
 def test_serve_refuses_to_start_without_a_torbox_key(monkeypatch, capsys):
@@ -190,14 +201,19 @@ STRANGER = "+15559999999"
 BOT_ACCOUNT = "+15550000001"
 
 
-def run_serve(tmp_path, monkeypatch, *texts, sender=ALLOWED, replies=1, wait=3.0):
+def run_serve(
+    tmp_path, monkeypatch, *texts, sender=ALLOWED, replies=1, wait=3.0, group=None, group_id=None
+):
     """Drive the real serve loop against a fake daemon and return its send requests."""
     socket_path = tmp_path / "signal.sock"
     sent: list[dict] = []
 
     async def daemon(reader, writer):
         for text in texts:
-            envelope = {"sourceNumber": sender, "dataMessage": {"message": text}}
+            data: dict = {"message": text}
+            if group:
+                data["groupInfo"] = {"groupId": group}
+            envelope = {"sourceNumber": sender, "dataMessage": data}
             notification = {"jsonrpc": "2.0", "method": "receive", "params": {"envelope": envelope}}
             writer.write(json.dumps(notification).encode() + b"\n")
         await writer.drain()
@@ -220,6 +236,7 @@ def run_serve(tmp_path, monkeypatch, *texts, sender=ALLOWED, replies=1, wait=3.0
             signal_account=BOT_ACCOUNT,
             signal_socket=socket_path,
             allowed_numbers=frozenset({ALLOWED}),
+            signal_group_id=group_id,
         )
         task = asyncio.create_task(cli._serve(cfg))
         try:
@@ -261,6 +278,12 @@ def test_serve_relink_with_nothing_stored_is_one_line(tmp_path, monkeypatch):
     assert sent[0]["params"]["message"] == "error: nothing delivered in this chat yet"
 
 
+def test_serve_malformed_abb_link_is_one_line_without_a_fetch(tmp_path, monkeypatch):
+    sent = run_serve(tmp_path, monkeypatch, "/abb not-a-link")
+
+    assert sent[0]["params"]["message"] == "error: not an AudiobookBay link"
+
+
 def test_serve_relink_reports_a_torrent_torbox_no_longer_lists(tmp_path, monkeypatch):
     state = jobs.State()
     state.add(42, ALLOWED, "Test Book - Ada Example", ABB_URL)
@@ -279,6 +302,37 @@ def test_serve_ignores_a_bare_link_and_plain_chatter(tmp_path, monkeypatch):
     assert sent == []
 
 
+GROUP = "r2V4group=="
+
+
+def test_serve_answers_the_configured_group_and_replies_into_it(tmp_path, monkeypatch):
+    sent = run_serve(tmp_path, monkeypatch, "/help", group=GROUP, group_id=GROUP)
+
+    assert sent[0]["params"] == {"groupId": GROUP, "message": messages.HELP}
+
+
+def test_serve_ignores_a_group_it_was_not_configured_for(tmp_path, monkeypatch):
+    sent = run_serve(
+        tmp_path, monkeypatch, "/help", group=GROUP, group_id="other==", replies=0, wait=0.3
+    )
+
+    assert sent == []
+
+
+def test_serve_trusts_every_member_of_the_configured_group(tmp_path, monkeypatch):
+    sent = run_serve(
+        tmp_path, monkeypatch, "/help", sender=STRANGER, group=GROUP, group_id=GROUP
+    )
+
+    assert sent[0]["params"] == {"groupId": GROUP, "message": messages.HELP}
+
+
+def test_serve_still_replies_to_a_direct_message_when_a_group_is_configured(tmp_path, monkeypatch):
+    sent = run_serve(tmp_path, monkeypatch, "/help", group_id=GROUP)
+
+    assert sent[0]["params"] == {"recipient": [ALLOWED], "message": messages.HELP}
+
+
 def test_serve_adds_a_link_and_delivers_its_url(tmp_path, monkeypatch):
     with respx.mock:
         respx.get(ABB_URL).mock(return_value=httpx.Response(200, text=FIXTURE.read_text()))
@@ -293,3 +347,19 @@ def test_serve_adds_a_link_and_delivers_its_url(tmp_path, monkeypatch):
     assert "https://cdn/x.zip" in texts
     assert all(request["params"]["recipient"] == [ALLOWED] for request in sent)
     assert json.loads(pathlib.Path("state.json").read_text())["+15550000002:42"]["sent"] is True
+
+
+def test_serve_logs_no_message_body_link_or_key(tmp_path, monkeypatch, capsys):
+    with respx.mock:
+        respx.get(ABB_URL).mock(return_value=httpx.Response(200, text=FIXTURE.read_text()))
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item()]))
+        respx.get(f"{API}/requestdl").mock(
+            return_value=httpx.Response(200, json={"success": True, "data": "https://cdn/secret"})
+        )
+        run_serve(tmp_path, monkeypatch, f"/abb {ABB_URL}", replies=2)
+
+    err = capsys.readouterr().err
+    assert ALLOWED in err  # who, and which command, is all that is logged
+    assert ABB_URL not in err
+    assert "https://cdn/secret" not in err
+    assert "test-key" not in err

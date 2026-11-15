@@ -82,9 +82,15 @@ async def _relink(api_key: str, torrent_id: int) -> int:
 async def _serve(cfg: config.Config) -> int:
     """Answer allowlisted chats through the same modules the CLI uses, and deliver
     finished jobs on the poll loop while the socket is up."""
-    if not cfg.signal_account or not cfg.allowed_numbers or not cfg.torbox_api_key:
+    if not cfg.signal_account or not cfg.torbox_api_key:
         print(
-            "error: SIGNAL_ACCOUNT, SIGNAL_ALLOWED_NUMBERS and TORBOX_API_KEY are required for --serve",
+            "error: SIGNAL_ACCOUNT and TORBOX_API_KEY are required for --serve",
+            file=sys.stderr,
+        )
+        return 1
+    if not cfg.allowed_numbers and not cfg.signal_group_id:
+        print(
+            "error: --serve needs SIGNAL_ALLOWED_NUMBERS or SIGNAL_GROUP_ID, else it answers nobody",
             file=sys.stderr,
         )
         return 1
@@ -115,7 +121,9 @@ async def _serve(cfg: config.Config) -> int:
 
 async def _receive_loop(client: signal.Client, cfg: config.Config, state: jobs.State) -> None:
     while (message := await client.next_message()) is not None:
-        if not messages.permitted(message.sender, message.group, cfg.allowed_numbers):
+        if not messages.permitted(
+            message.sender, message.group, cfg.allowed_numbers, cfg.signal_group_id
+        ):
             print(f"ignoring a message from {message.sender}", file=sys.stderr)
             continue
         command = messages.parse(message.text)
@@ -123,9 +131,9 @@ async def _receive_loop(client: signal.Client, cfg: config.Config, state: jobs.S
             continue
         print(f"serving {command.kind} for {message.sender}", file=sys.stderr)
         try:
-            await _answer(client, cfg, state, message.sender, command)
+            await _answer(client, cfg, state, message.chat, command)
         except (abb.AbbError, torbox.TorboxError, jobs.JobsError) as exc:
-            await client.send(message.sender, f"error: {exc}")
+            await client.send(message.chat, f"error: {exc}")
 
 
 async def _answer(

@@ -15,6 +15,7 @@ class Config:
     signal_account: str
     signal_socket: pathlib.Path
     allowed_numbers: frozenset[str]
+    signal_group_id: str | None
 
 
 def load(env: dict[str, str] | None = None) -> Config:
@@ -30,4 +31,5 @@ def load(env: dict[str, str] | None = None) -> Config:
             for number in values.get("SIGNAL_ALLOWED_NUMBERS", "").split(",")
             if number.strip()
         ),
+        signal_group_id=values.get("SIGNAL_GROUP_ID", "").strip() or None,
     )

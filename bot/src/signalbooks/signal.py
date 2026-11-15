@@ -12,6 +12,9 @@ import pathlib
 from dataclasses import dataclass
 
 TIMEOUT = 30.0
+# Chat keys for groups carry this prefix so a reply knows to use ``groupId``
+# instead of ``recipient``. Base64 group ids cannot contain a colon.
+GROUP_PREFIX = "group:"
 
 
 class SignalError(Exception):
@@ -23,6 +26,11 @@ class Incoming:
     sender: str
     text: str
     group: str | None = None
+
+    @property
+    def chat(self) -> str:
+        """Where a reply goes: the group, or the sender's number."""
+        return GROUP_PREFIX + self.group if self.group else self.sender
 
 
 class Client:
@@ -53,8 +61,12 @@ class Client:
         """The next message worth answering, or None once the socket closes."""
         return await self._inbox.get()
 
-    async def send(self, recipient: str, text: str) -> None:
-        await self._call("send", {"recipient": [recipient], "message": text})
+    async def send(self, chat: str, text: str) -> None:
+        if chat.startswith(GROUP_PREFIX):
+            params = {"groupId": chat[len(GROUP_PREFIX) :], "message": text}
+        else:
+            params = {"recipient": [chat], "message": text}
+        await self._call("send", params)
 
     async def _call(self, method: str, params: dict) -> object:
         writer = self._writer

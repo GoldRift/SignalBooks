@@ -20,10 +20,17 @@ def added(title: str, duplicate: bool = False) -> str:
     return f"{'already added' if duplicate else 'added'}: {title}"
 
 
-def permitted(sender: str, group: str | None, allowed: frozenset[str]) -> bool:
-    """Chat access policy: direct messages from an allowlisted number only. The
-    private group opens after the 1:1 flow is proven."""
-    return group is None and sender in allowed
+def permitted(
+    sender: str,
+    group: str | None,
+    allowed: frozenset[str],
+    group_id: str | None = None,
+) -> bool:
+    """Direct messages need an allowlisted number; the one configured group is
+    trusted whole, so every member of it can use the bot."""
+    if group is not None:
+        return group == group_id
+    return sender in allowed
 
 
 def parse(text: str) -> Command:
