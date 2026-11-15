@@ -114,7 +114,7 @@ def test_link_refuses_a_torrent_that_is_not_ready(capsys):
         )
         assert cli.main(["--link", "42"]) == 1
 
-    assert "not ready yet (downloading)" in capsys.readouterr().err
+    assert "still downloading" in capsys.readouterr().err
 
 
 def test_link_works_even_when_the_state_file_is_unreadable(capsys):
@@ -202,7 +202,15 @@ BOT_ACCOUNT = "+15550000001"
 
 
 def run_serve(
-    tmp_path, monkeypatch, *texts, sender=ALLOWED, replies=1, wait=3.0, group=None, group_id=None
+    tmp_path,
+    monkeypatch,
+    *texts,
+    sender=ALLOWED,
+    replies=1,
+    wait=3.0,
+    group=None,
+    group_id=None,
+    poll_seconds=0.01,
 ):
     """Drive the real serve loop against a fake daemon and return its send requests."""
     socket_path = tmp_path / "signal.sock"
@@ -251,7 +259,7 @@ def run_serve(
             server.close()
             await server.wait_closed()
 
-    monkeypatch.setattr(jobs, "POLL_SECONDS", 0.01)
+    monkeypatch.setattr(jobs, "POLL_SECONDS", poll_seconds)
     asyncio.run(asyncio.wait_for(scenario(), wait + 5))
     return sent
 
@@ -269,19 +277,57 @@ def test_serve_replies_to_help(tmp_path, monkeypatch):
 def test_serve_replies_usage_to_an_unknown_command(tmp_path, monkeypatch):
     sent = run_serve(tmp_path, monkeypatch, "/nope")
 
-    assert sent[0]["params"]["message"] == messages.USAGE
+    assert sent[0]["params"]["message"] == messages.usage("")
 
 
 def test_serve_relink_with_nothing_stored_is_one_line(tmp_path, monkeypatch):
     sent = run_serve(tmp_path, monkeypatch, "/relink")
 
-    assert sent[0]["params"]["message"] == "error: nothing delivered in this chat yet"
+    assert sent[0]["params"]["message"] == (
+        "Nothing has been sent in this chat yet. Use /abb with a book link."
+    )
+
+
+def test_serve_relink_with_a_pending_job_says_it_is_still_downloading(tmp_path, monkeypatch):
+    state = jobs.State()
+    state.add(42, ALLOWED, "Test Book - Ada Example", ABB_URL)
+    state.save()
+    with respx.mock:
+        # The background poll walks mylist for the pending job; relink itself
+        # must not be the thing that asks for a link.
+        respx.get(f"{API}/mylist").mock(
+            return_value=mylist(
+                [item(download_state="downloading", download_finished=False, cached=False)]
+            )
+        )
+        sent = run_serve(tmp_path, monkeypatch, "/relink")
+
+    assert sent[0]["params"]["message"] == (
+        "The last book in this chat is still downloading. Its link will arrive when it's ready."
+    )
+
+
+def test_serve_usage_for_abb_without_a_link_makes_no_request(tmp_path, monkeypatch):
+    with respx.mock:  # no routes: the parser must not reach the network
+        sent = run_serve(tmp_path, monkeypatch, "/abb")
+
+    assert sent[0]["params"]["message"] == messages.usage("abb")
+
+
+def test_serve_usage_for_a_malformed_relink_makes_no_request(tmp_path, monkeypatch):
+    with respx.mock:  # no routes: the parser must not reach the network
+        sent = run_serve(tmp_path, monkeypatch, "/relink abc")
+
+    assert sent[0]["params"]["message"] == messages.usage("relink")
 
 
 def test_serve_malformed_abb_link_is_one_line_without_a_fetch(tmp_path, monkeypatch):
-    sent = run_serve(tmp_path, monkeypatch, "/abb not-a-link")
+    with respx.mock:  # no routes: the link is rejected before fetching
+        sent = run_serve(tmp_path, monkeypatch, "/abb not-a-link")
 
-    assert sent[0]["params"]["message"] == "error: not an AudiobookBay link"
+    assert sent[0]["params"]["message"] == (
+        "That isn't an AudiobookBay link. Send /abb with the book's page link."
+    )
 
 
 def test_serve_relink_reports_a_torrent_torbox_no_longer_lists(tmp_path, monkeypatch):
@@ -293,7 +339,9 @@ def test_serve_relink_reports_a_torrent_torbox_no_longer_lists(tmp_path, monkeyp
         respx.get(f"{API}/mylist").mock(return_value=mylist([]))
         sent = run_serve(tmp_path, monkeypatch, "/relink")
 
-    assert sent[0]["params"]["message"] == "error: torrent 42 is not on TorBox"
+    assert sent[0]["params"]["message"] == (
+        "Torrent 42 is not on TorBox. Send /abb with the book link to add it again."
+    )
 
 
 def test_serve_ignores_a_bare_link_and_plain_chatter(tmp_path, monkeypatch):
@@ -343,10 +391,103 @@ def test_serve_adds_a_link_and_delivers_its_url(tmp_path, monkeypatch):
         sent = run_serve(tmp_path, monkeypatch, f"/abb {ABB_URL}", replies=2)
 
     texts = [request["params"]["message"] for request in sent]
-    assert "added: Test Book - Ada Example" in texts
-    assert "https://cdn/x.zip" in texts
+    assert "Added: Test Book - Ada Example\nLink coming when it's ready." in texts
+    assert any("https://cdn/x.zip" in text for text in texts)
+    assert any("1 file · 1 KB" in text for text in texts)
     assert all(request["params"]["recipient"] == [ALLOWED] for request in sent)
     assert json.loads(pathlib.Path("state.json").read_text())["+15550000002:42"]["sent"] is True
+
+
+def test_serve_delivers_a_cached_book_right_after_added(tmp_path, monkeypatch):
+    with respx.mock:
+        respx.get(ABB_URL).mock(return_value=httpx.Response(200, text=FIXTURE.read_text()))
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item()]))
+        respx.get(f"{API}/requestdl").mock(
+            return_value=httpx.Response(200, json={"success": True, "data": "https://cdn/x.zip"})
+        )
+        sent = run_serve(tmp_path, monkeypatch, f"/abb {ABB_URL}", replies=2, poll_seconds=30)
+
+    texts = [request["params"]["message"] for request in sent]
+    assert texts[0].startswith("Added: Test Book - Ada Example")
+    assert "https://cdn/x.zip" in texts[1]
+
+
+def test_serve_relink_names_the_last_book(tmp_path, monkeypatch):
+    state = jobs.State()
+    state.add(42, ALLOWED, "Test Book - Ada Example", ABB_URL)
+    state.record_delivery(42, ALLOWED)
+    state.save()
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item()]))
+        respx.get(f"{API}/requestdl").mock(
+            return_value=httpx.Response(200, json={"success": True, "data": "https://cdn/fresh"})
+        )
+        sent = run_serve(tmp_path, monkeypatch, "/relink")
+
+    assert sent[0]["params"]["message"] == (
+        "Fresh link for Test Book - Ada Example\n"
+        "https://cdn/fresh\n"
+        "Start the download within about 3 hours."
+    )
+
+
+def test_serve_duplicate_add_points_at_relink(tmp_path, monkeypatch):
+    state = jobs.State()
+    state.add(42, ALLOWED, "Test Book - Ada Example", ABB_URL)
+    state.record_delivery(42, ALLOWED)
+    state.save()
+    with respx.mock:
+        respx.get(ABB_URL).mock(return_value=httpx.Response(200, text=FIXTURE.read_text()))
+        sent = run_serve(tmp_path, monkeypatch, f"/abb {ABB_URL}")
+
+    assert sent[0]["params"]["message"] == (
+        "Already added: Test Book - Ada Example\n/relink 42 for a fresh one."
+    )
+
+
+def test_poll_loop_delivers_a_job_added_after_it_started(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobs, "POLL_SECONDS", 0.02)
+    state = jobs.State(tmp_path / "state.json")
+
+    class FakeClient:
+        def __init__(self):
+            self.sent: list[tuple[str, str]] = []
+
+        async def send(self, chat: str, text: str) -> None:
+            self.sent.append((chat, text))
+
+    cfg = config.Config(
+        torbox_api_key="test-key",
+        abb_cookie=None,
+        signal_account="",
+        signal_socket=tmp_path / "unused.sock",
+        allowed_numbers=frozenset(),
+        signal_group_id=None,
+    )
+
+    async def scenario():
+        with respx.mock:
+            respx.get(f"{API}/mylist").mock(return_value=mylist([item()]))
+            respx.get(f"{API}/requestdl").mock(
+                return_value=httpx.Response(200, json={"success": True, "data": "https://cdn/tick"})
+            )
+            client = FakeClient()
+            task = asyncio.create_task(cli._poll_loop(client, cfg, state, asyncio.Event()))
+            try:
+                await asyncio.sleep(0.05)  # let the loop take its first idle turn
+                state.add(42, "cli", "Test Book - Ada Example", ABB_URL)  # deliberately no wake
+                deadline = asyncio.get_running_loop().time() + 2
+                while not client.sent and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.01)
+            finally:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        return client.sent
+
+    sent = asyncio.run(scenario())
+    assert len(sent) == 1
+    assert "https://cdn/tick" in sent[0][1]
 
 
 def test_serve_logs_no_message_body_link_or_key(tmp_path, monkeypatch, capsys):

@@ -1,7 +1,7 @@
 # SignalBooks
 
-Send a Signal message with an AudiobookBay (ABB) link, get back a TorBox download
-link. No torrent data passes through this box and nothing is re-hosted.
+Send the bot `/abb` with an AudiobookBay (ABB) link, get back a TorBox download link.
+No torrent data passes through this box and nothing is re-hosted.
 
 `PLAN.md` is the spec; this README is the quick start.
 
@@ -9,8 +9,10 @@ link. No torrent data passes through this box and nothing is re-hosted.
 
 Live: 1:1 chats from allowlisted numbers, plus the configured private group, where
 every member is trusted. `/help`, `/abb`, and `/relink` are answered from chat, and a
-real ABB link was added and delivered. Single-file and zip links are confirmed against
-live TorBox. The same pipeline runs from the CLI.
+real ABB link was added and delivered. Replies name the book, the link, the file/zip
+shape, and the expiry; an add triggers a poll immediately, so a cached book does not
+wait for the 30 s interval. Single-file and zip links are confirmed against live
+TorBox. The same pipeline runs from the CLI.
 
 ## How it works
 
@@ -31,10 +33,24 @@ ignored.
 
 | Message | What happens |
 | --- | --- |
-| `/help` | One-line list of the commands. |
-| `/abb <link>` | Adds the torrent and replies `added: <title>`, then the download link when it is ready. |
-| `/relink` | A fresh link for the last book delivered in this chat. |
+| `/help` | A short guide with the commands and the link-expiry rule. |
+| `/abb <link>` | Adds the torrent and replies `Added: <title>` with a note that the link is coming. The download message follows when it is ready. |
+| `/relink` | A fresh titled link for the last book delivered in this chat. |
 | `/relink <torrent_id>` | A fresh link for that specific torrent; never re-adds or consumes a TorBox slot. |
+
+An add triggers a poll immediately, so a book TorBox already has cached is usually
+delivered right after "Added"; a fresh download arrives when a later poll sees it
+finish. After "Added: Test Book - Ada Example", the delivery looks like this:
+
+```text
+Test Book - Ada Example
+https://… (the presigned TorBox link)
+1 file · 438 MB
+Start the download within about 3 hours · /relink 42 for a new one
+```
+
+Bad links, unknown commands, and TorBox problems get a plain one-line explanation,
+never a stack trace.
 
 ## Layout
 

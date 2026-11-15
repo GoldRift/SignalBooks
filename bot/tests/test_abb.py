@@ -72,6 +72,13 @@ def test_parse_book_from_saved_page():
     assert book.info_hash == HASH
 
 
+def test_parse_book_without_title_errors():
+    with pytest.raises(
+        abb.AbbError, match="couldn't read the book's title from that AudiobookBay page"
+    ):
+        abb.parse_book("<html><body><p>no title here</p></body></html>")
+
+
 def test_parse_book_without_info_hash_errors():
     html = '<div class="postTitle"><h1 itemprop="name">Test Book</h1></div>'
     with pytest.raises(abb.AbbError, match="info hash"):
@@ -111,5 +118,5 @@ def test_fetch_book_wraps_transport_errors():
     url = "https://audiobookbay.lu/abss/test-book-ada-example/"
     with respx.mock:
         respx.get(url).mock(side_effect=httpx.ConnectError("boom"))
-        with pytest.raises(abb.AbbError, match="ConnectError"):
+        with pytest.raises(abb.AbbError, match="couldn't reach AudiobookBay"):
             asyncio.run(abb.fetch_book(url))

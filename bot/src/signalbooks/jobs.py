@@ -30,6 +30,7 @@ class Added:
     torrent_id: int
     title: str
     duplicate: bool = False
+    sent: bool = False  # a reply was already recorded for this duplicate
 
 
 @dataclass(frozen=True)
@@ -39,10 +40,20 @@ class Delivery:
     title: str
     url: str = ""
     error: str = ""
+    files: int = 0
+    size: int = 0
+    zipped: bool = False
 
 
 def _key(chat: str, torrent_id: int) -> str:
     return f"{chat}:{torrent_id}"
+
+
+def _failed_reason(item: torbox.Torrent) -> str:
+    """Short chat reason for a torrent TorBox reports as failed."""
+    if item.state.lower().startswith("stalled"):
+        return "The download stalled. Send /abb with the book link again in 10 minutes."
+    return "TorBox reported a download error. Send /abb with the book link again in 10 minutes."
 
 
 class State:
@@ -147,7 +158,12 @@ async def add(
     duplicate = state.recent(chat, book.url, now)
     if duplicate is not None:
         job = state.get(duplicate, chat) or {}
-        return Added(duplicate, job.get("title") or book.title, duplicate=True)
+        return Added(
+            duplicate,
+            job.get("title") or book.title,
+            duplicate=True,
+            sent=bool(job.get("sent")),
+        )
     existing = await torbox.find_by_hash(api_key, book.info_hash)
     if existing:
         torrent_id = existing.id
@@ -175,9 +191,15 @@ async def fresh_link(api_key: str, torrent_id: int) -> str:
     items = await torbox.find_many(api_key, {torrent_id}, files=True)
     item = items.get(torrent_id)
     if item is None:
-        raise JobsError(f"torrent {torrent_id} is not on TorBox")
+        raise JobsError(
+            f"torrent {torrent_id} is not on TorBox. Send /abb with the book link to add it again"
+        )
+    if item.failed:
+        raise JobsError(
+            f"torrent {torrent_id} failed on TorBox. Send /abb with the book link again in 10 minutes"
+        )
     if not item.done:
-        raise JobsError(f"torrent {torrent_id} is not ready yet ({item.state or 'unknown'})")
+        raise JobsError(f"torrent {torrent_id} is still downloading. Try again when it's done")
     return await link_for(api_key, item)
 
 
@@ -186,7 +208,11 @@ async def relink(api_key: str, state: State, chat: str, torrent_id: int | None =
     requestdl, so a still-pending job keeps its place in the poll loop."""
     torrent_id = state.last_sent(chat) if torrent_id is None else torrent_id
     if torrent_id is None:
-        raise JobsError("nothing delivered in this chat yet")
+        if any(pending_chat == chat for pending_chat, _, _ in state.pending()):
+            raise JobsError(
+                "the last book in this chat is still downloading. Its link will arrive when it's ready"
+            )
+        raise JobsError("nothing has been sent in this chat yet. Use /abb with a book link")
     return await fresh_link(api_key, torrent_id)
 
 
@@ -208,20 +234,37 @@ async def poll(api_key: str, state: State) -> list[Delivery]:
             job["misses"] = job.get("misses", 0) + 1
             if job["misses"] >= MISS_LIMIT:
                 deliveries.append(
-                    Delivery(torrent_id, chat, job["title"], error="torrent is gone from TorBox")
+                    Delivery(
+                        torrent_id,
+                        chat,
+                        job["title"],
+                        error="It's no longer on TorBox. Send /abb with the book link again in 10 minutes.",
+                    )
                 )
             continue
         job["misses"] = 0
         if item.failed:
-            deliveries.append(
-                Delivery(torrent_id, chat, job["title"], error=f"torrent is {item.state}")
-            )
+            deliveries.append(Delivery(torrent_id, chat, job["title"], error=_failed_reason(item)))
         elif item.done and item.files:
             try:
                 url = await link_for(api_key, item)
             except torbox.TorboxError as exc:
-                deliveries.append(Delivery(torrent_id, chat, job["title"], error=str(exc)))
+                detail = str(exc).rstrip(".")
+                hint = "" if "Try" in detail else f" Try /relink {torrent_id} in a minute."
+                deliveries.append(
+                    Delivery(torrent_id, chat, job["title"], error=f"{detail}.{hint}")
+                )
                 continue
-            deliveries.append(Delivery(torrent_id, chat, job["title"], url=url))
+            deliveries.append(
+                Delivery(
+                    torrent_id,
+                    chat,
+                    job["title"],
+                    url=url,
+                    files=len(item.files),
+                    size=sum(file.size for file in item.files),
+                    zipped=len(item.files) > 1,
+                )
+            )
     state.save()
     return deliveries

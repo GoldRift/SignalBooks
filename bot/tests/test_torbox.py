@@ -71,7 +71,28 @@ def test_a_queued_torrent_says_so_instead_of_looking_broken():
                 },
             )
         )
-        with pytest.raises(torbox.TorboxError, match="queued this torrent \\(3/3 active\\)"):
+        with pytest.raises(
+            torbox.TorboxError,
+            match=r"download limit \(3/3\) and queued this book\. Send /abb with the book link again once a slot frees up",
+        ):
+            asyncio.run(torbox.create_torrent(KEY, "magnet:?xt=urn:btih:abc"))
+
+
+def test_a_queued_torrent_without_slot_counts_still_says_why():
+    with respx.mock:
+        respx.post(f"{API}/createtorrent").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {"queued_id": 7, "hash": HASH},
+                },
+            )
+        )
+        with pytest.raises(
+            torbox.TorboxError,
+            match="download limit and queued this book. Send /abb with the book link again once a slot frees up",
+        ):
             asyncio.run(torbox.create_torrent(KEY, "magnet:?xt=urn:btih:abc"))
 
 
@@ -160,7 +181,7 @@ def test_mylist_with_an_unexpected_payload_is_an_error():
         respx.get(f"{API}/mylist").mock(
             return_value=httpx.Response(200, json={"success": True, "data": {"not": "a list"}})
         )
-        with pytest.raises(torbox.TorboxError, match="mylist payload"):
+        with pytest.raises(torbox.TorboxError, match="unexpected torrent list"):
             asyncio.run(torbox.find_many(KEY, {1}))
 
 
@@ -176,7 +197,7 @@ def test_mylist_with_an_unexpected_payload_is_an_error():
 def test_malformed_torrent_entries_are_errors(bad):
     with respx.mock:
         respx.get(f"{API}/mylist").mock(return_value=mylist(bad))
-        with pytest.raises(torbox.TorboxError, match="malformed"):
+        with pytest.raises(torbox.TorboxError, match="unexpected reply"):
             asyncio.run(torbox.find_many(KEY, {1}))
 
 
@@ -229,7 +250,7 @@ def test_non_json_response_reports_the_status():
 def test_transport_errors_are_wrapped():
     with respx.mock:
         respx.get(f"{API}/mylist").mock(side_effect=httpx.ConnectError("boom"))
-        with pytest.raises(torbox.TorboxError, match="ConnectError"):
+        with pytest.raises(torbox.TorboxError, match="couldn't reach TorBox"):
             asyncio.run(torbox.find_many(KEY, {1}))
 
 

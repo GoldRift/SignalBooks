@@ -42,13 +42,17 @@ def parse_url(text: str) -> str:
     """
     parts = urlparse(text.strip())
     if parts.hostname not in ABB_HOSTS:
-        raise AbbError("not an AudiobookBay link")
+        raise AbbError(
+            "that isn't an AudiobookBay link. Send /abb with the book's page link"
+        )
     if parts.scheme not in ("http", "https"):
-        raise AbbError("unsupported link scheme")
+        raise AbbError("that link needs to start with http:// or https://")
     slug = _SLUG.fullmatch(parts.path or "")
     if slug:
         return f"{BASE}/abss/{slug.group(1)}/"
-    raise AbbError("unsupported AudiobookBay link")
+    raise AbbError(
+        "that AudiobookBay link isn't a book page. Send /abb with the book's page link"
+    )
 
 
 def build_magnet(info_hash: str, title: str) -> str:
@@ -61,11 +65,11 @@ def parse_book(html: str, url: str = "") -> Book:
     tree = HTMLParser(html)
     title = _text(tree, "h1[itemprop=name]") or _text(tree, "div.postTitle h1")
     if not title:
-        raise AbbError("could not read the title from the ABB page")
+        raise AbbError("couldn't read the book's title from that AudiobookBay page. Try another link")
     authors = [n.text(strip=True) for n in tree.css("span.author") if n.text(strip=True)]
     info_hash = _info_hash(tree)
     if not info_hash:
-        raise AbbError("could not read the info hash from the ABB page")
+        raise AbbError("couldn't find the info hash on that AudiobookBay page. Try another link")
     return Book(url=url, title=title, author=", ".join(authors), info_hash=info_hash)
 
 
@@ -95,7 +99,11 @@ async def fetch_book(url: str, cookie: str | None = None) -> Book:
         try:
             response = await client.get(canonical, headers=headers)
         except httpx.HTTPError as exc:
-            raise AbbError(f"ABB fetch failed: {type(exc).__name__}") from exc
+            raise AbbError(
+                "couldn't reach AudiobookBay. Try again in a minute"
+            ) from exc
     if response.status_code != 200:
-        raise AbbError(f"ABB returned HTTP {response.status_code}")
+        raise AbbError(
+            f"AudiobookBay returned HTTP {response.status_code}. Try again later"
+        )
     return parse_book(response.text, canonical)

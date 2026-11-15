@@ -169,6 +169,17 @@ def test_add_ignores_the_same_link_from_the_same_chat_inside_ten_minutes(tmp_pat
         added = asyncio.run(jobs.add(KEY, state, "cli", book(), now=1000 + 599))
 
     assert added.duplicate and added.torrent_id == 42
+    assert added.sent is False
+
+
+def test_add_reports_a_duplicate_that_was_already_delivered(tmp_path):
+    state = jobs.State(tmp_path / "state.json")
+    state.add(42, "cli", "Test Book - Ada Example", URL)
+    state.record_delivery(42, "cli")
+    with respx.mock:  # dedup returns before any HTTP call
+        added = asyncio.run(jobs.add(KEY, state, "cli", book()))
+
+    assert added == jobs.Added(42, "Test Book - Ada Example", duplicate=True, sent=True)
 
 
 def test_add_accepts_the_same_link_after_the_dedup_window(tmp_path):
@@ -209,7 +220,15 @@ def test_poll_delivers_a_single_file_with_a_direct_link(tmp_path):
         deliveries = asyncio.run(jobs.poll(KEY, state))
 
     assert deliveries == [
-        jobs.Delivery(42, "cli", "Test Book - Ada Example", url="https://cdn.example/test-book.mp3")
+        jobs.Delivery(
+            42,
+            "cli",
+            "Test Book - Ada Example",
+            url="https://cdn.example/test-book.mp3",
+            files=1,
+            size=1000,
+            zipped=False,
+        )
     ]
     params = route.calls[0].request.url.params
     assert params["file_id"] == "1"
@@ -230,6 +249,9 @@ def test_poll_delivers_a_multi_file_torrent_as_one_zip(tmp_path):
         deliveries = asyncio.run(jobs.poll(KEY, state))
 
     assert deliveries[0].url == "https://cdn.example/zip/abc"
+    assert deliveries[0].files == 2
+    assert deliveries[0].size == 3000
+    assert deliveries[0].zipped is True
     assert route.calls[0].request.url.params["zip_link"] == "true"
 
 
@@ -273,12 +295,27 @@ def test_poll_reports_a_failed_torrent_only_once_after_it_is_recorded(tmp_path):
             return_value=mylist([item(42, download_state="error", download_finished=False)])
         )
         first = asyncio.run(jobs.poll(KEY, state))
-    assert first[0].error == "torrent is error"
+    assert first[0].error == (
+        "TorBox reported a download error. Send /abb with the book link again in 10 minutes."
+    )
 
     state.record_delivery(42, "cli")
     state.save()
     with respx.mock:  # delivered jobs are not polled again
         assert asyncio.run(jobs.poll(KEY, state)) == []
+
+
+def test_poll_reports_a_stalled_torrent_as_a_stall(tmp_path):
+    state = pending_state(tmp_path)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(
+            return_value=mylist([item(42, download_state="stalled (no seeds)", download_finished=False)])
+        )
+        deliveries = asyncio.run(jobs.poll(KEY, state))
+
+    assert deliveries[0].error == (
+        "The download stalled. Send /abb with the book link again in 10 minutes."
+    )
 
 
 def test_poll_reports_a_failed_link_request(tmp_path):
@@ -290,7 +327,21 @@ def test_poll_reports_a_failed_link_request(tmp_path):
         )
         deliveries = asyncio.run(jobs.poll(KEY, state))
 
-    assert deliveries[0].error == "TorBox: no slots"
+    assert deliveries[0].error == "TorBox: no slots. Try /relink 42 in a minute."
+
+
+def test_poll_does_not_stack_a_relink_hint_on_a_detail_that_has_one(tmp_path):
+    state = pending_state(tmp_path)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(return_value=mylist([item(42)]))
+        respx.get(f"{API}/requestdl").mock(
+            return_value=httpx.Response(
+                200, json={"success": False, "detail": "temporary failure. Try again later"}
+            )
+        )
+        deliveries = asyncio.run(jobs.poll(KEY, state))
+
+    assert deliveries[0].error == "TorBox: temporary failure. Try again later."
 
 
 def test_poll_keeps_retrying_a_torrent_torbox_does_not_list_yet(tmp_path):
@@ -310,7 +361,9 @@ def test_poll_gives_up_after_repeated_misses(tmp_path):
             assert asyncio.run(jobs.poll(KEY, state)) == []
         deliveries = asyncio.run(jobs.poll(KEY, state))
 
-    assert deliveries[0].error == "torrent is gone from TorBox"
+    assert deliveries[0].error == (
+        "It's no longer on TorBox. Send /abb with the book link again in 10 minutes."
+    )
 
 
 def test_a_seen_torrent_resets_the_miss_count_and_the_count_survives_a_restart(tmp_path):
@@ -361,10 +414,24 @@ def test_relink_with_an_explicit_torrent_id_ignores_the_last_delivery(tmp_path):
     assert route.calls[0].request.url.params["torrent_id"] == "42"
 
 
-def test_relink_with_nothing_delivered_makes_no_request(tmp_path):
+def test_relink_with_nothing_sent_makes_no_request(tmp_path):
+    state = jobs.State(tmp_path / "state.json")
+    # no routes: any HTTP call fails the test
+    with respx.mock, pytest.raises(jobs.JobsError, match="nothing has been sent in this chat yet"):
+        asyncio.run(jobs.relink(KEY, state, "cli"))
+
+
+def test_relink_while_that_chat_still_has_a_pending_job_makes_no_request(tmp_path):
     state = pending_state(tmp_path)
     # no routes: any HTTP call fails the test
-    with respx.mock, pytest.raises(jobs.JobsError, match="nothing delivered"):
+    with respx.mock, pytest.raises(jobs.JobsError, match="still downloading"):
+        asyncio.run(jobs.relink(KEY, state, "cli"))
+
+
+def test_relink_sees_no_pending_job_when_only_another_chat_is_waiting(tmp_path):
+    state = pending_state(tmp_path, chat="group")
+    # no routes: any HTTP call fails the test
+    with respx.mock, pytest.raises(jobs.JobsError, match="nothing has been sent in this chat yet"):
         asyncio.run(jobs.relink(KEY, state, "cli"))
 
 
@@ -372,7 +439,10 @@ def test_relink_reports_a_torrent_torbox_no_longer_lists(tmp_path):
     state = delivered_state(tmp_path, 42)
     with respx.mock:
         respx.get(f"{API}/mylist").mock(return_value=mylist([]))
-        with pytest.raises(jobs.JobsError, match="not on TorBox"):
+        with pytest.raises(
+            jobs.JobsError,
+            match="torrent 42 is not on TorBox. Send /abb with the book link to add it again",
+        ):
             asyncio.run(jobs.relink(KEY, state, "cli"))
 
 
@@ -382,7 +452,22 @@ def test_relink_waits_for_a_torrent_that_is_still_downloading(tmp_path):
         respx.get(f"{API}/mylist").mock(
             return_value=mylist([item(42, download_state="downloading", download_finished=False)])
         )
-        with pytest.raises(jobs.JobsError, match="not ready yet \\(downloading\\)"):
+        with pytest.raises(
+            jobs.JobsError, match="torrent 42 is still downloading. Try again when it's done"
+        ):
+            asyncio.run(jobs.relink(KEY, state, "cli"))
+
+
+def test_relink_reports_a_failed_torrent_before_waiting_on_it(tmp_path):
+    state = delivered_state(tmp_path, 42)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(
+            return_value=mylist([item(42, download_state="stalled", download_finished=False)])
+        )
+        with pytest.raises(
+            jobs.JobsError,
+            match="torrent 42 failed on TorBox. Send /abb with the book link again in 10 minutes",
+        ):
             asyncio.run(jobs.relink(KEY, state, "cli"))
 
 

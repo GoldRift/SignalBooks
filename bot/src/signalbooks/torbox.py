@@ -66,16 +66,16 @@ def _torrent(item: dict) -> Torrent:
             files=files,
         )
     except (AttributeError, KeyError, TypeError, ValueError):
-        raise TorboxError("TorBox returned a malformed torrent entry") from None
+        raise TorboxError("TorBox sent an unexpected reply. Try again in a minute") from None
 
 
 def _data(response: httpx.Response) -> object:
     try:
         body = response.json()
     except ValueError:
-        raise TorboxError(f"TorBox returned HTTP {response.status_code}") from None
+        raise TorboxError(f"TorBox returned HTTP {response.status_code}. Try again later") from None
     if not isinstance(body, dict):
-        raise TorboxError("TorBox returned an unexpected response")
+        raise TorboxError("TorBox sent an unexpected reply. Try again in a minute")
     if not body.get("success"):
         detail = body.get("detail") or body.get("error") or f"HTTP {response.status_code}"
         raise TorboxError(f"TorBox: {detail}")
@@ -93,7 +93,7 @@ async def _request(
             **kwargs,
         )
     except httpx.HTTPError as exc:
-        raise TorboxError(f"TorBox request failed: {type(exc).__name__}") from exc
+        raise TorboxError("couldn't reach TorBox. Try again in a minute") from exc
     return _data(response)
 
 
@@ -106,16 +106,17 @@ async def create_torrent(api_key: str, magnet: str) -> tuple[int, str]:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         data = await _request(client, "POST", f"{TORRENTS}/createtorrent", api_key, data={"magnet": magnet})
     if not isinstance(data, dict):
-        raise TorboxError("TorBox returned an unexpected response")
+        raise TorboxError("TorBox sent an unexpected reply. Try again in a minute")
     if not data.get("torrent_id"):
         if data.get("queued_id"):
             active = data.get("current_active_downloads")
             limit = data.get("active_limit")
-            counts = f" ({active}/{limit} active)" if active is not None and limit is not None else ""
+            counts = f" ({active}/{limit})" if active is not None and limit is not None else ""
             raise TorboxError(
-                f"TorBox queued this torrent{counts}; it starts on TorBox's schedule"
+                "TorBox is at its download limit"
+                f"{counts} and queued this book. Send /abb with the book link again once a slot frees up"
             )
-        raise TorboxError("TorBox did not return a torrent id")
+        raise TorboxError("TorBox accepted the book but returned no torrent id")
     return int(data["torrent_id"]), (data.get("hash") or "").lower()
 
 
@@ -133,7 +134,7 @@ async def _scan(api_key: str, files: bool, keep, stop) -> list[Torrent]:
                 params["files"] = "true"
             items = await _request(client, "GET", f"{TORRENTS}/mylist", api_key, params=params) or []
             if not isinstance(items, list):
-                raise TorboxError("TorBox returned an unexpected mylist payload")
+                raise TorboxError("TorBox sent an unexpected torrent list. Try again in a minute")
             for item in items:
                 torrent = _torrent(item)
                 if keep(torrent):
@@ -183,4 +184,4 @@ async def request_link(
         return data
     if isinstance(data, dict) and isinstance(data.get("url"), str):
         return data["url"]
-    raise TorboxError("TorBox did not return a download link")
+    raise TorboxError("TorBox didn't return a download link")

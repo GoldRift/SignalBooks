@@ -1,7 +1,7 @@
 # SignalBooks — Plan
 
-A Signal bot: send it an AudiobookBay link, it adds the torrent to TorBox, waits for the
-download, and replies with a TorBox download link.
+A Signal bot: send it `/abb` with an AudiobookBay link, it adds the torrent to TorBox,
+waits for the download, and replies with a TorBox download link.
 
 ## Decisions (locked)
 
@@ -42,8 +42,8 @@ it was not asked for.
 
 | Command | Behavior |
 | --- | --- |
-| `/help` | One-line list of supported commands. |
-| `/abb <link>` | Same as sending an ABB link: add the torrent, wait, reply with the download link. |
+| `/help` | Short guide: what the bot does, the commands, and the link-expiry rule. |
+| `/abb <link>` | Add the torrent for that book page, wait, reply with the download link. |
 | `/relink` | Re-request a fresh `requestdl` link for the last torrent delivered in this chat. |
 | `/relink <torrent_id>` | Re-request a link for a specific stored torrent. |
 
@@ -127,9 +127,13 @@ python -m signalbooks --link <torrent_id>     # re-request a link for a stored t
 - Excess adds are queued by TorBox itself (`queued_id`) and started later by its
   scheduler; the bot keeps no queue of its own. A queued response is reported in one
   line, never silently dropped.
-- Replies are minimal: "added", final link, or a one-line error. No progress spam.
-  Errors surfaced to the user: bad/unsupported link, page fetch failed, TorBox
-  rejected it, torrent errored/stalled, link request failed.
+- Replies are minimal but specific. An add is `Added: <title>` plus one line saying
+  the link is coming; a delivery is the title, the URL, a file/zip+size line, and one
+  start-by/`/relink` hint; `/relink` is titled and repeats the start-by window; errors
+  are one line with a recovery step.
+  No progress spam or percentage updates. Errors surfaced to the user:
+  bad/unsupported link, page fetch failed, TorBox rejected it, torrent errored/stalled,
+  link request failed.
 
 ## Phases
 
@@ -237,6 +241,18 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
       Maintenance).
 - [x] Runbook: re-link device, rotate API key, regenerate a link, inspect state.json
       (README → Maintenance).
+
+### 7. Chat interface polish
+
+- [x] Rewrite the command copy: a short help guide, actionable usage and failure
+      text, a titled `/relink`, and a delivery that names the book, the file/zip shape,
+      the size, when the download must be started, and the torrent id for `/relink`.
+- [x] Nudge the poll loop after an add so a cached book does not wait out the 30 s
+      interval before it can be delivered.
+- [x] Cover every chat state with exact-string tests; no new dependencies and no
+      `state.json` schema change.
+- [x] Confirm the copy in live Signal (wrapping, `·`/`—`, no Markdown assumptions),
+      then close this phase. Verified 2026-11-15.
 
 ## Not doing (unless asked)
 
