@@ -12,7 +12,7 @@ download, and replies with a TorBox download link.
 | TorBox input | Scrape the ABB page, read the info hash, `POST` a built magnet to `createtorrent`. |
 | Delivery | `requestdl` link, sent back as a Signal text message. Link must be opened within ~3 h; after the download starts it is not time-limited. |
 | Hosting | Docker Compose on an always-on box: `signal-cli` service + `bot` service, shared socket volume. |
-| Access | Allowlist of sender numbers. Private chat first; one configured private group only after the private flow is tested. |
+| Access | Allowlist of sender numbers for 1:1 chats, plus one configured group whose members are all trusted. |
 | Prereqs | TorBox paid plan + API key, Signal account to link. No ABB account: the info hash is readable anonymously (verified 2026-11-12), so `ABB_COOKIE` is optional and only set if a login gate returns. |
 | Build order | **Pipeline first, bot second.** `abb → torbox → jobs` must run end-to-end from a CLI against live ABB/TorBox before any Signal code is written. The bot is then a thin adapter over the same modules — no throwaway scripts, no rework. |
 
@@ -156,7 +156,8 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 - [x] `createtorrent` against an already-cached torrent returns
       `"Found Cached Torrent. Using Cached Torrent."` with a fresh `torrent_id`, so
       cached adds can go straight to delivery without waiting on the poll loop.
-- [ ] Pick the private group id (base64) only after the 1:1 flow works.
+- [x] Pick the private group id: **Audiobooks** (2 members), set as `SIGNAL_GROUP_ID`
+      2026-11-14; group replies work live and every member is trusted.
 - [x] All three TorBox calls verified against the live account: `createtorrent`
       (cached add returns a `torrent_id` immediately), `mylist?bypass_cache=true`
       (cached item: `download_state: cached`, `progress: 1`, `files: 7`), and
@@ -177,7 +178,7 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
       from Signal → Settings → Linked devices. (Linking needs no spare number; it becomes
       a linked device on your existing account. A separate number would have to be registered.)
 - [x] Echo bot: log incoming messages, reply "pong". Proved in a 1:1 chat 2026-11-14;
-      the private group still waits for the 1:1 flow to be routed end-to-end.
+      routing end-to-end followed in Phase 4.
 - [x] `.env.example`, `.gitignore`, README with the link procedure.
 
 ### 2. ABB → magnet
@@ -220,18 +221,22 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 
 ### 5. Hardening
 
-- [ ] Allowlist and group enforcement tests (foreign sender, wrong group, self-sync).
-- [ ] Command tests: unknown command, `/relink` with nothing stored, malformed `/abb`.
-- [ ] Revisit only if uncached bursts show up: TorBox queues excess adds itself, so a
-      queued job is currently a one-line error. Tracking its `queued_id` via
-      `torrents/getqueued` is the only way to deliver a link for it automatically.
-- [ ] Log redaction: never log message bodies, API keys, or presigned URLs.
-- [ ] Pin `signal-cli`; document the quarterly update (Signal breaks old clients).
+- [x] Allowlist and group enforcement tests (foreign sender, wrong group, self-sync).
+- [x] Command tests: unknown command, `/relink` with nothing stored, malformed `/abb`.
+- [x] Revisit only if uncached bursts show up: not triggered — audiobooks are cached,
+      so a slot is never occupied and `queued_id` never appears. No queue code, as
+      designed; `torrents/getqueued` stays the upgrade path if it ever shows up.
+- [x] Log redaction: never log message bodies, API keys, or presigned URLs. Only the
+      sender and command kind are logged; covered by `test_serve_logs_no_message_body_link_or_key`.
+- [x] Pin `signal-cli`; document the quarterly update (Signal breaks old clients):
+      digest-pinned in `docker-compose.yml`, update steps in README → Maintenance.
 
 ### 6. Deploy + runbook
 
-- [ ] Compose up on the server, volume backup note for signal-cli keys.
-- [ ] Runbook: re-link device, rotate API key, regenerate a link, inspect state.json.
+- [x] Compose up on the server, volume backup note for signal-cli keys (README →
+      Maintenance).
+- [x] Runbook: re-link device, rotate API key, regenerate a link, inspect state.json
+      (README → Maintenance).
 
 ## Not doing (unless asked)
 

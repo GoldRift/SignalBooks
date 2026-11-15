@@ -7,11 +7,10 @@ link. No torrent data passes through this box and nothing is re-hosted.
 
 ## Status
 
-Phase 1 is proven: the device is linked, `signal-cli` and the bot run under compose,
-and an allowlisted number gets a reply in a 1:1 chat. Chat routing works: `/help`,
-`/abb`, and `/relink` go through the same modules as the CLI, and a real ABB link
-was added and delivered from chat. The single-file and zip links are confirmed
-working against live TorBox.
+Live: 1:1 chats from allowlisted numbers, plus the configured private group, where
+every member is trusted. `/help`, `/abb`, and `/relink` are answered from chat, and a
+real ABB link was added and delivered. Single-file and zip links are confirmed against
+live TorBox. The same pipeline runs from the CLI.
 
 ## How it works
 
@@ -26,8 +25,9 @@ over the same modules.
 
 ## Commands
 
-1:1 chats from allowlisted numbers only. Only messages that start with a command
-are answered; anything else is ignored.
+1:1 chats from allowlisted numbers, plus one optional group whose members are all
+trusted. Only messages that start with a command are answered; anything else is
+ignored.
 
 | Message | What happens |
 | --- | --- |
@@ -133,8 +133,70 @@ published. The linked-device keys and `state.json` live in named volumes
 (`signal-cli-data`, `bot-state`), so nothing lands on the host and nothing is
 committed.
 
-Send `/help`, `/relink`, or `/abb <link>` in a 1:1 chat to use it; the private
-group is not enabled yet.
+Send `/help`, `/relink`, or `/abb <link>` in a 1:1 chat to use it. A group works
+too once `SIGNAL_GROUP_ID` names it; replies land back in that group.
+
+## Maintenance
+
+The linked-device keys are the one thing you cannot recreate: they live in the
+`signal-cli-data` volume. The bot's `bot-state` volume holds `state.json` (pending
+jobs and delivered replies).
+
+Back up both before upgrades or when moving the box:
+
+```sh
+docker volume ls | grep -E 'signal-cli-data|bot-state'   # exact names first
+docker run --rm -v signalbooks_signal-cli-data:/data:ro -v "$PWD":/backup alpine \
+  tar -C /data -czf /backup/signal-cli-data.tgz .
+docker run --rm -v signalbooks_bot-state:/data:ro -v "$PWD":/backup alpine \
+  tar -C /data -czf /backup/bot-state.tgz .
+```
+
+Restore into empty volumes with the same commands using `-xzf` and no `:ro`, after
+`docker compose down`. Keep the backups private: the keys are the account.
+
+**Re-link the device** (new box, lost keys, or a `signal-cli` that no longer starts):
+stop the stack, link, then start it; remove the stale `SignalBooks` entry from
+Signal → Linked devices afterwards.
+
+```sh
+docker compose down
+docker compose run --rm signal-cli link -n SignalBooks
+docker compose up -d
+```
+
+**Rotate the TorBox API key**: edit `TORBOX_API_KEY` in `.env`, then recreate the bot
+only — no rebuild. Pending jobs keep their place.
+
+```sh
+docker compose up -d --force-recreate bot
+```
+
+**Regenerate a download link** without touching the queue: `/relink` in chat (last
+book delivered there), `/relink <torrent_id>`, or from the host:
+
+```sh
+docker compose exec bot python -m signalbooks --link <torrent_id>
+```
+
+The torrent stays on TorBox, so this works after the ~3 h presigned window. It only
+calls `requestdl`; it never re-adds anything.
+
+**Inspect `state.json`** (titles, chats, and short-lived presigned URLs — do not
+paste it publicly, and do not hand-edit while the bot runs):
+
+```sh
+docker compose exec bot cat /state/state.json
+```
+
+**Update `signal-cli` quarterly** — Signal drops old clients. The version is pinned
+by digest in `docker-compose.yml`; bump the digest deliberately, keep the version
+comment current, then rebuild and watch for the JSON-RPC server line in the logs:
+
+```sh
+docker compose up -d --build --force-recreate
+docker compose logs --tail 20 signal-cli
+```
 
 ## Configuration
 
@@ -143,7 +205,8 @@ All config comes from env vars (see `PLAN.md`).
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `SIGNAL_ACCOUNT` | for `--serve` | The Signal number the linked device belongs to. |
-| `SIGNAL_ALLOWED_NUMBERS` | for `--serve` | Comma-separated numbers allowed to use the bot. Everything else is ignored. |
+| `SIGNAL_ALLOWED_NUMBERS` | for `--serve`, unless `SIGNAL_GROUP_ID` is set | Comma-separated numbers allowed to use the bot in 1:1 chats. Everything else is ignored. |
+| `SIGNAL_GROUP_ID` | no | One Signal group's base64 id (`signal-cli listGroups`). Every member of that group may use the bot; no other group is answered. |
 | `SIGNAL_SOCKET` | no | signal-cli's Unix socket; defaults to `/run/signal-cli/socket`, which compose sets. |
 | `TORBOX_API_KEY` | for `--abb --wait` and `--link` | TorBox API key, sent as a bearer token (`requestdl` also takes it as the `token` query param). |
 | `ABB_COOKIE` | no | Session cookie for ABB, sent only when set. The info hash is served anonymously, so this is only for the day a login gate or Cloudflare challenge returns. |
