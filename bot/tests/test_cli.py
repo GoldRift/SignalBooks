@@ -10,7 +10,7 @@ import pytest
 import respx
 
 from signalbooks import __main__ as cli
-from signalbooks import config, jobs, messages
+from signalbooks import config, jobs, messages, signal
 
 API = "https://api.torbox.app/v1/api/torrents"
 ABB_URL = "https://audiobookbay.lu/abss/test-book-ada-example/"
@@ -294,12 +294,9 @@ def test_serve_relink_with_a_pending_job_says_it_is_still_downloading(tmp_path, 
     state.save()
     with respx.mock:
         # The background poll walks mylist for the pending job; relink itself
-        # must not be the thing that asks for a link.
-        respx.get(f"{API}/mylist").mock(
-            return_value=mylist(
-                [item(download_state="downloading", download_finished=False, cached=False)]
-            )
-        )
+        # must not be the thing that asks for a link. Nothing is listed yet, so
+        # the poll sends no progress message to race with the reply.
+        respx.get(f"{API}/mylist").mock(return_value=mylist([]))
         sent = run_serve(tmp_path, monkeypatch, "/relink")
 
     assert sent[0]["params"]["message"] == (
@@ -410,6 +407,95 @@ def test_serve_delivers_a_cached_book_right_after_added(tmp_path, monkeypatch):
     texts = [request["params"]["message"] for request in sent]
     assert texts[0].startswith("Added: Test Book - Ada Example")
     assert "https://cdn/x.zip" in texts[1]
+
+
+def test_serve_turns_one_progress_message_into_the_delivery(tmp_path, monkeypatch):
+    title = "Test Book - Ada Example"
+    with respx.mock:
+        respx.get(ABB_URL).mock(return_value=httpx.Response(200, text=FIXTURE.read_text()))
+        respx.get(f"{API}/mylist").mock(
+            side_effect=[
+                mylist([]),  # the dedup lookup in jobs.add
+                mylist(
+                    [
+                        item(
+                            download_state="downloading",
+                            download_finished=False,
+                            cached=False,
+                            progress=0.1,
+                            size=2000,
+                        )
+                    ]
+                ),
+                mylist(
+                    [
+                        item(
+                            download_state="downloading",
+                            download_finished=False,
+                            cached=False,
+                            progress=0.3,
+                            size=2000,
+                        )
+                    ]
+                ),
+                mylist([item(download_state="completed", download_finished=True, progress=1)]),
+            ]
+        )
+        respx.post(f"{API}/createtorrent").mock(
+            return_value=httpx.Response(
+                200, json={"success": True, "data": {"torrent_id": 42, "hash": HASH}}
+            )
+        )
+        respx.get(f"{API}/requestdl").mock(
+            return_value=httpx.Response(200, json={"success": True, "data": "https://cdn/x.zip"})
+        )
+        sent = run_serve(tmp_path, monkeypatch, f"/abb {ABB_URL}", replies=4)
+
+    added, bar, stepped, finished = [request["params"] for request in sent]
+    assert added["message"].startswith("Added: Test Book - Ada Example")
+    assert bar["message"] == messages.progress(title, 10, 2000)
+    assert "editTimestamp" not in bar and bar["noUrgent"] is True
+    assert stepped["message"] == messages.progress(title, 30, 2000)
+    assert stepped["editTimestamp"] == 1 and stepped["noUrgent"] is True
+    assert finished["message"] == messages.delivery(
+        jobs.Delivery(42, ALLOWED, title, url="https://cdn/x.zip", files=1, size=1000)
+    )
+    assert finished["editTimestamp"] == 1
+    assert "noUrgent" not in finished  # the link is worth a notification
+    state = json.loads(pathlib.Path("state.json").read_text())
+    assert state["+15550000002:42"]["sent"] is True
+
+
+def test_a_failed_finishing_edit_still_sends_the_link(tmp_path):
+    title = "Test Book - Ada Example"
+    state = jobs.State(tmp_path / "state.json")
+    state.add(42, ALLOWED, title, ABB_URL)
+    state.set_progress(42, ALLOWED, 99, 75)
+    delivery = jobs.Delivery(42, ALLOWED, title, url="https://cdn/x.zip", files=1, size=1000)
+
+    class FlakyClient:
+        def __init__(self):
+            self.edits = 0
+            self.sent: list[tuple[str, str]] = []
+
+        async def edit(self, chat: str, timestamp: int, text: str, urgent: bool = True) -> None:
+            self.edits += 1
+            raise signal.SignalError("edit refused")
+
+        async def send(self, chat: str, text: str, urgent: bool = True) -> int:
+            self.sent.append((chat, text))
+            return 1
+
+    async def scenario():
+        client = FlakyClient()
+        await cli._deliver(client, state, delivery)
+        return client
+
+    client = asyncio.run(scenario())
+
+    assert client.edits == 1
+    assert client.sent == [(ALLOWED, messages.delivery(delivery))]
+    assert state.get(42, ALLOWED)["sent"] is True
 
 
 def test_serve_relink_names_the_last_book(tmp_path, monkeypatch):

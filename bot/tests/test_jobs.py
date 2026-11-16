@@ -65,6 +65,8 @@ def test_state_round_trips_without_leaving_a_temp_file(tmp_path):
                 "added_at": state.get(42, "cli")["added_at"],
                 "sent": False,
                 "misses": 0,
+                "progress_ts": 0,
+                "progress_pct": -1,
             },
         )
     ]
@@ -267,16 +269,49 @@ def test_poll_delivers_a_cached_torrent_without_waiting_for_a_download(tmp_path)
     assert deliveries and deliveries[0].url
 
 
-def test_poll_waits_while_the_torrent_is_downloading(tmp_path):
+def test_poll_reports_a_downloading_torrent_as_progress(tmp_path):
     state = pending_state(tmp_path)
     with respx.mock:
         respx.get(f"{API}/mylist").mock(
-            return_value=mylist([item(42, download_state="downloading", download_finished=False)])
+            return_value=mylist(
+                [
+                    item(
+                        42,
+                        download_state="downloading",
+                        download_finished=False,
+                        progress=0.4,
+                        size=2_100_000_000,
+                    )
+                ]
+            )
         )
-        deliveries = asyncio.run(jobs.poll(KEY, state))
+        events = asyncio.run(jobs.poll(KEY, state))
 
-    assert deliveries == []
+    assert events == [jobs.Progress(42, "cli", "Test Book - Ada Example", 40, 2_100_000_000)]
     assert state.get(42, "cli")["sent"] is False
+
+
+def test_progress_never_reads_a_hundred_before_the_link_exists(tmp_path):
+    state = pending_state(tmp_path)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(
+            return_value=mylist(
+                [item(42, download_state="finishing", download_finished=False, progress=1)]
+            )
+        )
+        events = asyncio.run(jobs.poll(KEY, state))
+
+    assert events[0].percent == 99
+
+
+def test_a_live_message_target_survives_a_restart(tmp_path):
+    state = pending_state(tmp_path)
+    state.set_progress(42, "cli", 1712345678, 25)
+    state.save()
+
+    reread = jobs.State(tmp_path / "state.json")
+    assert reread.progress(42, "cli") == (1712345678, 25)
+    assert jobs.State(tmp_path / "other.json").progress(42, "cli") == (0, -1)
 
 
 def test_poll_waits_when_a_done_torrent_has_no_file_list_yet(tmp_path):
@@ -379,8 +414,9 @@ def test_a_seen_torrent_resets_the_miss_count_and_the_count_survives_a_restart(t
         respx.get(f"{API}/mylist").mock(
             return_value=mylist([item(42, download_state="downloading", download_finished=False)])
         )
-        assert asyncio.run(jobs.poll(KEY, state)) == []
+        events = asyncio.run(jobs.poll(KEY, state))
 
+    assert [event for event in events if isinstance(event, jobs.Delivery)] == []
     assert state.get(42, "cli")["misses"] == 0
 
 

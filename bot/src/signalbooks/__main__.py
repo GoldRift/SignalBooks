@@ -63,11 +63,13 @@ async def _run(args: argparse.Namespace) -> int:
     else:
         print(f"added: {added.title} (torrent {added.torrent_id})")
     while True:
-        for delivery in await jobs.poll(cfg.torbox_api_key, state):
-            code = _show(delivery)
-            state.record_delivery(delivery.torrent_id, delivery.chat)
+        for event in await jobs.poll(cfg.torbox_api_key, state):
+            if isinstance(event, jobs.Progress):
+                continue
+            code = _show(event)
+            state.record_delivery(event.torrent_id, event.chat)
             state.save()
-            if delivery.torrent_id == added.torrent_id:
+            if event.torrent_id == added.torrent_id:
                 return code
         await asyncio.sleep(jobs.POLL_SECONDS)
 
@@ -181,18 +183,58 @@ async def _poll_loop(
         wake.clear()
         if state.pending():
             try:
-                deliveries = await jobs.poll(cfg.torbox_api_key, state)
+                events = await jobs.poll(cfg.torbox_api_key, state)
             except torbox.TorboxError as exc:
                 print(f"poll failed: {exc}", file=sys.stderr)
-                deliveries = []
-            for delivery in deliveries:
-                await client.send(delivery.chat, messages.delivery(delivery))
-                state.record_delivery(delivery.torrent_id, delivery.chat)
-                state.save()
+                events = []
+            for event in events:
+                if isinstance(event, jobs.Progress):
+                    await _publish_progress(client, state, event)
+                else:
+                    await _deliver(client, state, event)
         try:
             await asyncio.wait_for(wake.wait(), jobs.POLL_SECONDS)
         except TimeoutError:
             pass
+
+
+async def _publish_progress(
+    client: signal.Client, state: jobs.State, update: jobs.Progress
+) -> None:
+    """One live bubble per job: send it once, then refresh it at each step.
+    A failed update is logged and retried on the next poll, never fatal."""
+    timestamp, shown = state.progress(update.torrent_id, update.chat)
+    text = messages.progress(update.title, update.percent, update.size)
+    next_step = (shown // jobs.PROGRESS_STEP + 1) * jobs.PROGRESS_STEP
+    try:
+        if not timestamp:
+            timestamp = await client.send(update.chat, text, urgent=False)
+        elif update.percent >= next_step:
+            await client.edit(update.chat, timestamp, text, urgent=False)
+        else:
+            return
+    except signal.SignalError as exc:
+        print(f"progress update failed: {exc}", file=sys.stderr)
+        return
+    state.set_progress(update.torrent_id, update.chat, timestamp, update.percent)
+    state.save()
+
+
+async def _deliver(client: signal.Client, state: jobs.State, delivery: jobs.Delivery) -> None:
+    """The live bubble finishes as the delivery, so the link replaces the bar."""
+    text = messages.delivery(delivery)
+    timestamp, _ = state.progress(delivery.torrent_id, delivery.chat)
+    if not timestamp:
+        await client.send(delivery.chat, text)
+    else:
+        try:
+            await client.edit(delivery.chat, timestamp, text)
+        except signal.SignalError as exc:
+            # A failed edit must not swallow the link; the bar just stays behind.
+            print(f"could not finish the progress message: {exc}", file=sys.stderr)
+            await client.send(delivery.chat, text)
+    state.record_delivery(delivery.torrent_id, delivery.chat)
+    state.save()
 
 
 def _show(delivery: jobs.Delivery) -> int:

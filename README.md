@@ -40,7 +40,9 @@ ignored.
 
 An add triggers a poll immediately, so a book TorBox already has cached is usually
 delivered right after "Added"; a fresh download arrives when a later poll sees it
-finish. After "Added: Test Book - Ada Example", the delivery looks like this:
+finish. A fresh download also gets one live progress message — a bar that moves at
+each quarter — and its last edit is the delivery, so the bar becomes the link. After
+"Added: Test Book - Ada Example", the delivery looks like this:
 
 ```text
 Test Book - Ada Example

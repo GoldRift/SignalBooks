@@ -61,12 +61,27 @@ class Client:
         """The next message worth answering, or None once the socket closes."""
         return await self._inbox.get()
 
-    async def send(self, chat: str, text: str) -> None:
-        if chat.startswith(GROUP_PREFIX):
-            params = {"groupId": chat[len(GROUP_PREFIX) :], "message": text}
-        else:
-            params = {"recipient": [chat], "message": text}
+    async def send(self, chat: str, text: str, *, urgent: bool = True) -> int:
+        """Send, returning the message's timestamp so it can be edited later."""
+        params = self._params(chat, text)
+        if not urgent:
+            params["noUrgent"] = True
+        return _timestamp(await self._call("send", params))
+
+    async def edit(self, chat: str, timestamp: int, text: str, *, urgent: bool = True) -> None:
+        """Replace the text of a message this account sent. The bubble keeps the
+        timestamp it was sent with, so every edit targets that same one."""
+        params = self._params(chat, text)
+        params["editTimestamp"] = timestamp
+        if not urgent:
+            params["noUrgent"] = True
         await self._call("send", params)
+
+    @staticmethod
+    def _params(chat: str, text: str) -> dict:
+        if chat.startswith(GROUP_PREFIX):
+            return {"groupId": chat[len(GROUP_PREFIX) :], "message": text}
+        return {"recipient": [chat], "message": text}
 
     async def _call(self, method: str, params: dict) -> object:
         writer = self._writer
@@ -126,6 +141,14 @@ class Client:
         for future in self._waiting.values():
             if not future.done():
                 future.set_exception(SignalError("signal-cli closed the socket"))
+
+
+def _timestamp(result: object) -> int:
+    """signal-cli answers a send with ``{timestamp, results}``; the timestamp is
+    what a later edit must target."""
+    if isinstance(result, dict) and isinstance(result.get("timestamp"), int):
+        return result["timestamp"]
+    raise SignalError("signal-cli did not confirm the message")
 
 
 def _incoming(params: dict, account: str) -> Incoming | None:

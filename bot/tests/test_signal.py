@@ -171,6 +171,72 @@ def test_a_group_chat_is_sent_by_group_id_not_recipient(tmp_path):
     assert seen[0]["params"] == {"groupId": "group==", "message": "pong"}
 
 
+def test_a_send_returns_the_timestamp_a_later_edit_needs(tmp_path):
+    async def action(socket_path):
+        client = signal.Client(socket_path, ACCOUNT)
+        await client.connect()
+        try:
+            return await asyncio.wait_for(client.send(OTHER, "pong"), 5)
+        finally:
+            await client.close()
+
+    assert run(tmp_path, answer({"result": {"timestamp": 1712345678}}), action) == 1712345678
+
+
+def test_an_edit_targets_the_original_message_and_can_arrive_silently(tmp_path):
+    seen: list = []
+
+    async def action(socket_path):
+        client = signal.Client(socket_path, ACCOUNT)
+        await client.connect()
+        try:
+            await asyncio.wait_for(client.edit(OTHER, 1712345678, "52%", urgent=False), 5)
+        finally:
+            await client.close()
+
+    run(tmp_path, answer({"result": {"timestamp": 1712345679}}, seen), action)
+
+    assert seen[0]["params"] == {
+        "recipient": [OTHER],
+        "message": "52%",
+        "editTimestamp": 1712345678,
+        "noUrgent": True,
+    }
+
+
+def test_a_group_edit_targets_the_group(tmp_path):
+    seen: list = []
+
+    async def action(socket_path):
+        client = signal.Client(socket_path, ACCOUNT)
+        await client.connect()
+        try:
+            await asyncio.wait_for(client.edit("group:group==", 1712345678, "52%"), 5)
+        finally:
+            await client.close()
+
+    run(tmp_path, answer({"result": {"timestamp": 1712345679}}, seen), action)
+
+    assert seen[0]["params"] == {
+        "groupId": "group==",
+        "message": "52%",
+        "editTimestamp": 1712345678,
+    }
+
+
+def test_a_send_signal_cli_does_not_confirm_is_an_error(tmp_path):
+    async def action(socket_path):
+        client = signal.Client(socket_path, ACCOUNT)
+        await client.connect()
+        try:
+            with pytest.raises(signal.SignalError, match="did not confirm"):
+                await asyncio.wait_for(client.send(OTHER, "pong"), 5)
+        finally:
+            await client.close()
+
+    run(tmp_path, answer({"result": {}}), action)
+
+
 def test_a_rejected_request_raises_a_one_line_error(tmp_path):
     async def action(socket_path):
         client = signal.Client(socket_path, ACCOUNT)

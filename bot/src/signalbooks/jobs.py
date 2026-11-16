@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from . import abb, torbox
 
 POLL_SECONDS = 30.0
+# The live bubble moves at each quarter of the download, then becomes the
+# delivery: Signal allows ten edits per message per day, so a bar cannot be live.
+PROGRESS_STEP = 25
 DEDUP_SECONDS = 600
 # A torrent TorBox no longer lists is retried for a couple of minutes before it
 # is reported as gone; that keeps a transient pagination miss from ending a job.
@@ -43,6 +46,17 @@ class Delivery:
     files: int = 0
     size: int = 0
     zipped: bool = False
+
+
+@dataclass(frozen=True)
+class Progress:
+    """A job still downloading: what its one live message should say now."""
+
+    torrent_id: int
+    chat: str
+    title: str
+    percent: int
+    size: int = 0
 
 
 def _key(chat: str, torrent_id: int) -> str:
@@ -107,6 +121,17 @@ class State:
     def get(self, torrent_id: int, chat: str) -> dict | None:
         return self.jobs.get(_key(chat, torrent_id))
 
+    def progress(self, torrent_id: int, chat: str) -> tuple[int, int]:
+        """The live message's timestamp and the percent last shown in it."""
+        job = self.get(torrent_id, chat) or {}
+        return int(job.get("progress_ts") or 0), int(job.get("progress_pct", -1))
+
+    def set_progress(self, torrent_id: int, chat: str, timestamp: int, percent: int) -> None:
+        job = self.get(torrent_id, chat)
+        if job is not None:
+            job["progress_ts"] = timestamp
+            job["progress_pct"] = percent
+
     def add(self, torrent_id: int, chat: str, title: str, url: str, now: float | None = None) -> None:
         key = _key(chat, torrent_id)
         self.jobs.pop(key, None)
@@ -117,6 +142,8 @@ class State:
             "added_at": int(time.time() if now is None else now),
             "sent": False,
             "misses": 0,
+            "progress_ts": 0,
+            "progress_pct": -1,
         }
 
     def record_delivery(self, torrent_id: int, chat: str, title: str = "") -> None:
@@ -216,9 +243,9 @@ async def relink(api_key: str, state: State, chat: str, torrent_id: int | None =
     return await fresh_link(api_key, torrent_id)
 
 
-async def poll(api_key: str, state: State) -> list[Delivery]:
+async def poll(api_key: str, state: State) -> list[Delivery | Progress]:
     """Refresh every pending job with one mylist walk and report the ones that
-    are ready.
+    are ready, or still downloading.
 
     Nothing is marked delivered here: the caller records each reply after it is
     actually sent, so a crash in between repeats a reply instead of losing it.
@@ -227,13 +254,13 @@ async def poll(api_key: str, state: State) -> list[Delivery]:
     if not pending:
         return []
     items = await torbox.find_many(api_key, {torrent_id for _, torrent_id, _ in pending}, files=True)
-    deliveries: list[Delivery] = []
+    events: list[Delivery | Progress] = []
     for chat, torrent_id, job in pending:
         item = items.get(torrent_id)
         if item is None:
             job["misses"] = job.get("misses", 0) + 1
             if job["misses"] >= MISS_LIMIT:
-                deliveries.append(
+                events.append(
                     Delivery(
                         torrent_id,
                         chat,
@@ -244,18 +271,22 @@ async def poll(api_key: str, state: State) -> list[Delivery]:
             continue
         job["misses"] = 0
         if item.failed:
-            deliveries.append(Delivery(torrent_id, chat, job["title"], error=_failed_reason(item)))
-        elif item.done and item.files:
+            events.append(Delivery(torrent_id, chat, job["title"], error=_failed_reason(item)))
+        elif not item.done:
+            events.append(
+                Progress(torrent_id, chat, job["title"], _percent(item.progress), item.size)
+            )
+        elif item.files:
             try:
                 url = await link_for(api_key, item)
             except torbox.TorboxError as exc:
                 detail = str(exc).rstrip(".")
                 hint = "" if "Try" in detail else f" Try /relink {torrent_id} in a minute."
-                deliveries.append(
+                events.append(
                     Delivery(torrent_id, chat, job["title"], error=f"{detail}.{hint}")
                 )
                 continue
-            deliveries.append(
+            events.append(
                 Delivery(
                     torrent_id,
                     chat,
@@ -267,4 +298,9 @@ async def poll(api_key: str, state: State) -> list[Delivery]:
                 )
             )
     state.save()
-    return deliveries
+    return events
+
+
+def _percent(progress: float) -> int:
+    """A download never reads 100 % before its link exists."""
+    return min(99, max(0, int(progress * 100)))

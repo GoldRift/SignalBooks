@@ -157,6 +157,30 @@ def test_a_delivery_reason_without_a_period_gains_one():
     )
 
 
+def test_a_progress_message_carries_the_bar_the_number_and_the_bytes():
+    assert messages.progress("Test Book — Ada Example", 78, 2_100_000_000) == (
+        "Test Book — Ada Example\n████████░░ 78% · 1.6 GB of 2.1 GB"
+    )
+
+
+def test_a_progress_message_starts_without_a_percentage():
+    assert messages.progress("Test Book — Ada Example", 0) == (
+        "Test Book — Ada Example\n░░░░░░░░░░ 0% · starting"
+    )
+
+
+def test_a_progress_message_without_a_size_keeps_a_short_line():
+    assert messages.progress("Book", 40) == "Book\n████░░░░░░ 40%"
+
+
+def test_the_bar_stays_ten_cells_and_never_reads_a_hundred():
+    for percent, filled in ((0, 0), (25, 3), (50, 5), (75, 8), (99, 10), (100, 10)):
+        line = messages.progress("Book", percent).splitlines()[1]
+        assert line.count("█") == filled
+        assert line.count("█") + line.count("░") == 10
+    assert "99%" in messages.progress("Book", 100)
+
+
 def test_relink_names_the_book_when_it_is_known():
     assert messages.relink("https://cdn.example/fresh", "Test Book — Ada Example") == (
         "Fresh link for Test Book — Ada Example\n"

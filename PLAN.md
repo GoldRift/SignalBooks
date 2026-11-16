@@ -131,7 +131,9 @@ python -m signalbooks --link <torrent_id>     # re-request a link for a stored t
   the link is coming; a delivery is the title, the URL, a file/zip+size line, and one
   start-by/`/relink` hint; `/relink` is titled and repeats the start-by window; errors
   are one line with a recovery step.
-  No progress spam or percentage updates. Errors surfaced to the user:
+  An uncached book gets one live progress message, edited at each quarter of the
+  download and finally replaced by the delivery text; a cached book never sees one.
+  Errors surfaced to the user:
   bad/unsupported link, page fetch failed, TorBox rejected it, torrent errored/stalled,
   link request failed.
 
@@ -254,6 +256,22 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 - [x] Confirm the copy in live Signal (wrapping, `·`/`—`, no Markdown assumptions),
       then close this phase. Verified 2026-11-15.
 
+### 8. Progress message for an uncached book
+
+- [x] A cached book is untouched: `Added: <title>`, then the delivery, no bar.
+- [x] A fresh download gets one live message: the book, a ten-cell plain-text bar,
+      the percent, and `downloaded of total`. It is edited at each quarter, and its
+      last edit is the delivery text, so the bar becomes the link. Signal allows ten
+      edits per message in 24 h; this flow uses four.
+- [x] The live message's timestamp and the percent last shown are stored
+      (`progress_ts`, `progress_pct`), so a restart keeps editing the same bubble.
+      A failed send or edit is logged and retried on the next poll, never fatal; a
+      failed finishing edit falls back to a normal delivery message.
+- [x] The bar and its quarter edits are `--no-urgent`; the last edit is urgent so
+      the link can notify.
+- [ ] Live check: an uncached book in Signal shows the bar, two edits, and the link
+      in the same bubble — and decide whether the final edit notifies.
+
 ## Not doing (unless asked)
 
 - Web UI, multi-user accounts, per-user TorBox keys.
@@ -261,7 +279,8 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 - Uploading to third-party file hosters.
 - Accepting raw magnets or `.torrent` files (ABB links only).
 - Auto-deleting torrents from TorBox — it would free slots but kills link regeneration.
-- Progress percentage updates in chat.
+- A bar that updates more often than each quarter: Signal's ten-edit limit in 24 h
+  rules out a live one, and deleting the bar leaves a tombstone in the chat.
 
 ## Known risks
 
@@ -274,5 +293,8 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
   or a permissive socket directory.
 - **Presigned links expire for starting a download** after ~3 h. The torrent stays on
   TorBox, so a re-request always works.
+- **A delivered link arrives as an edit** of the progress bubble. If Signal clients do
+  not notify on edits, the link can sit unnoticed; the live check in Phase 8 decides
+  whether the delivery should stay a separate message.
 - **TorBox slot limits** mean a burst of links queues rather than fails; keep the
   server-side queue explicit and drain it as slots free.

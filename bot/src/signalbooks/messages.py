@@ -69,6 +69,22 @@ def delivery(job: "Delivery") -> str:
     return "\n".join(lines)
 
 
+BAR_CELLS = 10
+
+
+def progress(title: str, percent: int, size: int = 0) -> str:
+    """One live bubble: a plain-text bar, its number, and how far the bytes got.
+    Called again with a bigger number to edit the same message."""
+    percent = max(0, min(99, percent))
+    filled = (percent * BAR_CELLS + 50) // 100
+    line = f"{'█' * filled}{'░' * (BAR_CELLS - filled)} {percent}%"
+    if percent == 0:
+        return f"{title}\n{line} · starting"
+    if size > 0:
+        line += f" · {size_text(size * percent // 100)} of {size_text(size)}"
+    return f"{title}\n{line}"
+
+
 def relink(url: str, title: str = "", torrent_id: int = 0) -> str:
     label = title or (f"torrent {torrent_id}" if torrent_id else "that book")
     return f"Fresh link for {label}\n{url}\nStart the download within about 3 hours."

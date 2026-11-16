@@ -38,6 +38,8 @@ class Torrent:
     finished: bool
     cached: bool
     files: tuple[File, ...]
+    progress: float = 0.0
+    size: int = 0  # total bytes; 0 when TorBox has not measured it yet
 
     @property
     def done(self) -> bool:
@@ -64,6 +66,8 @@ def _torrent(item: dict) -> Torrent:
             finished=bool(item.get("download_finished")),
             cached=bool(item.get("cached")),
             files=files,
+            progress=float(item.get("progress") or 0),
+            size=int(item.get("size") or 0),
         )
     except (AttributeError, KeyError, TypeError, ValueError):
         raise TorboxError("TorBox sent an unexpected reply. Try again in a minute") from None
