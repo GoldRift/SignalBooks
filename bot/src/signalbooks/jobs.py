@@ -63,11 +63,18 @@ def _key(chat: str, torrent_id: int) -> str:
     return f"{chat}:{torrent_id}"
 
 
-def _failed_reason(item: torbox.Torrent) -> str:
-    """Short chat reason for a torrent TorBox reports as failed."""
+def _failed_reason(item: torbox.Torrent, removed: bool) -> str:
+    """Short chat reason for a torrent TorBox reports as failed, naming whether
+    its slot was freed."""
     if item.state.lower().startswith("stalled"):
-        return "The download stalled. Send /abb with the book link again in 10 minutes."
-    return "TorBox reported a download error. Send /abb with the book link again in 10 minutes."
+        reason = "The download stalled (no seeds, usually)."
+    else:
+        reason = "TorBox reported a download error."
+    if removed:
+        reason += " Removed it from TorBox so it doesn't hold a slot."
+    else:
+        reason += " Couldn't remove it from TorBox, so it may still hold a slot."
+    return f"{reason} Send /abb with the book link again in 10 minutes."
 
 
 class State:
@@ -271,7 +278,10 @@ async def poll(api_key: str, state: State) -> list[Delivery | Progress]:
             continue
         job["misses"] = 0
         if item.failed:
-            events.append(Delivery(torrent_id, chat, job["title"], error=_failed_reason(item)))
+            removed = await _retire(api_key, torrent_id)
+            events.append(
+                Delivery(torrent_id, chat, job["title"], error=_failed_reason(item, removed))
+            )
         elif not item.done:
             events.append(
                 Progress(torrent_id, chat, job["title"], _percent(item.progress), item.size)
@@ -304,3 +314,13 @@ async def poll(api_key: str, state: State) -> list[Delivery | Progress]:
 def _percent(progress: float) -> int:
     """A download never reads 100 % before its link exists."""
     return min(99, max(0, int(progress * 100)))
+
+
+async def _retire(api_key: str, torrent_id: int) -> bool:
+    """A dead download has no link left to keep, so free its slot. TorBox
+    refusing is reported in the reply rather than failing the whole poll."""
+    try:
+        await torbox.delete_torrent(api_key, torrent_id)
+    except torbox.TorboxError:
+        return False
+    return True

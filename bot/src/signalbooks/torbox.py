@@ -172,6 +172,19 @@ async def find_many(api_key: str, ids: set[int], files: bool = False) -> dict[in
     return {t.id: t for t in found}
 
 
+async def delete_torrent(api_key: str, torrent_id: int) -> None:
+    """Remove a torrent from TorBox. Used for dead downloads only: they have no
+    link to regenerate and keep holding one of the account's slots."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        await _request(
+            client,
+            "POST",
+            f"{TORRENTS}/controltorrent",
+            api_key,
+            json={"torrent_id": torrent_id, "operation": "delete"},
+        )
+
+
 async def request_link(
     api_key: str, torrent_id: int, file_id: int | None = None, zip_link: bool = False
 ) -> str:

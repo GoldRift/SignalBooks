@@ -267,10 +267,24 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
       (`progress_ts`, `progress_pct`), so a restart keeps editing the same bubble.
       A failed send or edit is logged and retried on the next poll, never fatal; a
       failed finishing edit falls back to a normal delivery message.
-- [x] The bar and its quarter edits are `--no-urgent`; the last edit is urgent so
-      the link can notify.
-- [ ] Live check: an uncached book in Signal shows the bar, two edits, and the link
-      in the same bubble — and decide whether the final edit notifies.
+- [x] The bar and its quarter edits are `--no-urgent`; the last edit keeps the
+      default urgency, but Signal clients do not push for an edit, so the bubble the
+      user is already watching is the only cue.
+- [x] Live check 2026-11-15: an uncached book showed the bar, its quarter edits, and
+      then the link in the same bubble; the final edit did not ring the phone.
+
+### 9. Retire a dead download
+
+- [x] A torrent TorBox reports as `stalled` or `error` is deleted from the account
+      (`POST /torrents/controltorrent`, `operation: delete`) before the reply, so it
+      stops holding a slot. A delivered torrent stays, so `/relink` keeps working.
+- [x] The reply names the reason and invites a retry: "The download stalled (no seeds,
+      usually). Removed it from TorBox so it doesn't hold a slot. Send /abb with the
+      book link again in 10 minutes."
+- [x] If TorBox refuses the delete, the reply says the torrent may still hold a slot
+      and the poll carries on.
+- [ ] Live check: a no-seed torrent disappears from the TorBox dashboard and the chat
+      says why. Needs a deliberately dead torrent.
 
 ## Not doing (unless asked)
 
@@ -278,7 +292,9 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
 - Downloading or seeding anything locally.
 - Uploading to third-party file hosters.
 - Accepting raw magnets or `.torrent` files (ABB links only).
-- Auto-deleting torrents from TorBox — it would free slots but kills link regeneration.
+- Auto-deleting a *delivered* torrent from TorBox — it would free slots but kills link
+  regeneration. Only a dead download (stalled or errored) is removed; it has no link
+  worth keeping.
 - A bar that updates more often than each quarter: Signal's ten-edit limit in 24 h
   rules out a live one, and deleting the bar leaves a tombstone in the chat.
 
@@ -293,8 +309,8 @@ Everything before it is validated from the CLI, so a signal-cli surprise only to
   or a permissive socket directory.
 - **Presigned links expire for starting a download** after ~3 h. The torrent stays on
   TorBox, so a re-request always works.
-- **A delivered link arrives as an edit** of the progress bubble. If Signal clients do
-  not notify on edits, the link can sit unnoticed; the live check in Phase 8 decides
-  whether the delivery should stay a separate message.
+- **A delivered link arrives as a silent edit** of the progress bubble: Signal clients
+  do not push for an edit (confirmed 2026-11-15), so a user who has left the chat is
+  not pinged. The link is in the bubble they were watching, and `/relink` recovers.
 - **TorBox slot limits** mean a burst of links queues rather than fails; keep the
   server-side queue explicit and drain it as slots free.

@@ -1,6 +1,7 @@
-"""Tests for the three TorBox calls, against mocked HTTP."""
+"""Tests for the TorBox calls, against mocked HTTP."""
 
 import asyncio
+import json
 import urllib.parse
 
 import httpx
@@ -227,6 +228,18 @@ def test_request_link_for_one_file_sends_file_id():
     params = route.calls[0].request.url.params
     assert params["file_id"] == "3"
     assert "zip_link" not in params
+
+
+def test_delete_torrent_posts_the_controltorrent_operation():
+    with respx.mock:
+        route = respx.post(f"{API}/controltorrent").mock(
+            return_value=httpx.Response(200, json={"success": True, "data": {}})
+        )
+        asyncio.run(torbox.delete_torrent(KEY, 42))
+
+    request = route.calls[0].request
+    assert json.loads(request.content) == {"torrent_id": 42, "operation": "delete"}
+    assert request.headers["Authorization"] == f"Bearer {KEY}"
 
 
 def test_failed_envelope_uses_the_detail_line():

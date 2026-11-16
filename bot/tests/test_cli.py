@@ -461,7 +461,7 @@ def test_serve_turns_one_progress_message_into_the_delivery(tmp_path, monkeypatc
         jobs.Delivery(42, ALLOWED, title, url="https://cdn/x.zip", files=1, size=1000)
     )
     assert finished["editTimestamp"] == 1
-    assert "noUrgent" not in finished  # the link is worth a notification
+    assert "noUrgent" not in finished  # keeps the default urgency; edits still do not push
     state = json.loads(pathlib.Path("state.json").read_text())
     assert state["+15550000002:42"]["sent"] is True
 

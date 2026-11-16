@@ -14,6 +14,9 @@ shape, and the expiry; an add triggers a poll immediately, so a cached book does
 wait for the 30 s interval. Single-file and zip links are confirmed against live
 TorBox. The same pipeline runs from the CLI.
 
+A download that stalls or errors is removed from TorBox before the reply, so it stops
+holding a slot; the reply says why and invites a retry.
+
 ## How it works
 
 ```
@@ -41,8 +44,9 @@ ignored.
 An add triggers a poll immediately, so a book TorBox already has cached is usually
 delivered right after "Added"; a fresh download arrives when a later poll sees it
 finish. A fresh download also gets one live progress message — a bar that moves at
-each quarter — and its last edit is the delivery, so the bar becomes the link. After
-"Added: Test Book - Ada Example", the delivery looks like this:
+each quarter — and its last edit is the delivery, so the bar becomes the link. An
+edit does not ring the phone, so watch the bubble. After "Added: Test Book - Ada
+Example", the delivery looks like this:
 
 ```text
 Test Book - Ada Example
@@ -243,5 +247,5 @@ All config comes from env vars (see `PLAN.md`).
 ## Not doing
 
 Web UI, per-user accounts, local downloads or seeding, file hosters, raw magnets or
-`.torrent` uploads, auto-deleting torrents from TorBox, progress updates in chat.
-See `PLAN.md`.
+`.torrent` uploads, auto-deleting a *delivered* torrent (a stalled or errored one is
+removed so it cannot hold a slot). See `PLAN.md`.

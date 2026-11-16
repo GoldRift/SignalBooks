@@ -42,6 +42,10 @@ def link(url: str = "https://cdn.example/book") -> httpx.Response:
     return httpx.Response(200, json={"success": True, "data": url})
 
 
+def retired() -> httpx.Response:
+    return httpx.Response(200, json={"success": True, "data": {}})
+
+
 def pending_state(tmp_path, torrent_id: int = 42, chat: str = "cli") -> jobs.State:
     state = jobs.State(tmp_path / "state.json")
     state.add(torrent_id, chat, "Test Book - Ada Example", URL)
@@ -323,16 +327,22 @@ def test_poll_waits_when_a_done_torrent_has_no_file_list_yet(tmp_path):
     assert deliveries == []
 
 
-def test_poll_reports_a_failed_torrent_only_once_after_it_is_recorded(tmp_path):
+def test_poll_retires_a_failed_torrent_and_does_not_poll_it_again(tmp_path):
     state = pending_state(tmp_path)
     with respx.mock:
         respx.get(f"{API}/mylist").mock(
             return_value=mylist([item(42, download_state="error", download_finished=False)])
         )
+        route = respx.post(f"{API}/controltorrent").mock(return_value=retired())
         first = asyncio.run(jobs.poll(KEY, state))
     assert first[0].error == (
-        "TorBox reported a download error. Send /abb with the book link again in 10 minutes."
+        "TorBox reported a download error. Removed it from TorBox so it doesn't hold a slot. "
+        "Send /abb with the book link again in 10 minutes."
     )
+    assert json.loads(route.calls[0].request.content) == {
+        "torrent_id": 42,
+        "operation": "delete",
+    }
 
     state.record_delivery(42, "cli")
     state.save()
@@ -340,17 +350,34 @@ def test_poll_reports_a_failed_torrent_only_once_after_it_is_recorded(tmp_path):
         assert asyncio.run(jobs.poll(KEY, state)) == []
 
 
-def test_poll_reports_a_stalled_torrent_as_a_stall(tmp_path):
+def test_poll_retires_a_stalled_torrent_before_replying(tmp_path):
     state = pending_state(tmp_path)
     with respx.mock:
         respx.get(f"{API}/mylist").mock(
             return_value=mylist([item(42, download_state="stalled (no seeds)", download_finished=False)])
         )
+        route = respx.post(f"{API}/controltorrent").mock(return_value=retired())
         deliveries = asyncio.run(jobs.poll(KEY, state))
 
+    assert route.call_count == 1
     assert deliveries[0].error == (
-        "The download stalled. Send /abb with the book link again in 10 minutes."
+        "The download stalled (no seeds, usually). Removed it from TorBox so it doesn't hold a "
+        "slot. Send /abb with the book link again in 10 minutes."
     )
+
+
+def test_a_torrent_torbox_refuses_to_remove_still_gets_its_reply(tmp_path):
+    state = pending_state(tmp_path)
+    with respx.mock:
+        respx.get(f"{API}/mylist").mock(
+            return_value=mylist([item(42, download_state="stalled", download_finished=False)])
+        )
+        respx.post(f"{API}/controltorrent").mock(
+            return_value=httpx.Response(200, json={"success": False, "detail": "not found"})
+        )
+        deliveries = asyncio.run(jobs.poll(KEY, state))
+
+    assert "Couldn't remove it from TorBox, so it may still hold a slot." in deliveries[0].error
 
 
 def test_poll_reports_a_failed_link_request(tmp_path):
